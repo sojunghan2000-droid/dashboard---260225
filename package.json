@@ -1,0 +1,23 @@
+{
+  "name": "performance-management-dashboard_updated-260105-r.3_-미배포_-시수입력-화면-조정-완_화면-초기화-완_-캘린더-숨김/활성-완료_-obs-등록_-task-등록-제한",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react-dom": "^19.1.1",
+    "react": "^19.1.1",
+    "xlsx": "^0.18.5",
+    "chart.js": "^4.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}

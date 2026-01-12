@@ -1,0 +1,771 @@
+:root {
+  /* Colors */
+  --primary: #007bff;
+  --primary-hover: #0056b3;
+  --secondary: #6c757d;
+  --success: #28a745;
+  --danger: #dc3545;
+  --warning: #ffc107;
+  --info: #17a2b8;
+  --light: #f8f9fa;
+  --dark: #343a40;
+  --border: #dee2e6;
+  --text-main: #333;
+  --text-sub: #6c757d;
+  
+  /* Layout */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 60px;
+  --header-height: 60px;
+  
+  /* Z-Index Layering */
+  --z-header: 1000;
+  --z-sidebar: 2000;
+  --z-modal: 3000;
+  --z-toast: 4000;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--light);
+  color: var(--text-main);
+  font-size: 14px;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+#root { height: 100%; }
+ul { list-style: none; }
+a { text-decoration: none; color: inherit; }
+
+/* === Layout & Utilities === */
+.app-layout { display: flex; height: 100%; }
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.flex-center { display: flex; align-items: center; justify-content: center; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+.gap-1 { gap: 0.5rem; }
+.gap-2 { gap: 1rem; }
+.mb-1 { margin-bottom: 0.5rem; }
+.mb-2 { margin-bottom: 1rem; }
+.text-right { text-align: right; }
+.w-full { width: 100%; }
+.h-full { height: 100%; }
+.scroll-y { overflow-y: auto; }
+
+/* Sidebar */
+.sidebar {
+  width: var(--sidebar-width);
+  background-color: #212529;
+  color: #f8f9fa;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.3s ease;
+  z-index: var(--z-sidebar);
+}
+.sidebar.collapsed { width: var(--sidebar-collapsed-width); }
+.sidebar-header { padding: 1rem; font-size: 1.25rem; font-weight: 700; display: flex; justify-content: space-between; align-items: center; height: var(--header-height); border-bottom: 1px solid rgba(255,255,255,0.1); }
+.sidebar-toggle-btn { background: transparent; border: none; color: #adb5bd; cursor: pointer; font-size: 1.2rem; }
+.sidebar-nav { flex: 1; padding: 1rem 0; overflow-y: auto; }
+.sidebar-nav a { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; color: #adb5bd; transition: 0.2s; }
+.sidebar-nav a:hover, .sidebar-nav li.active a { background-color: var(--dark); color: white; border-left: 4px solid var(--primary); }
+.nav-icon { font-size: 1.1rem; min-width: 24px; text-align: center; }
+.sidebar.collapsed .nav-text, .sidebar.collapsed .sidebar-header h2 { display: none; }
+
+/* Main Content */
+.main-content { flex-grow: 1; display: flex; flex-direction: column; overflow-y: auto; background-color: var(--light); height: 100vh; }
+.sticky-header-container { position: sticky; top: 0; z-index: var(--z-header); background-color: white; border-bottom: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+.header { padding: 0.75rem 1.5rem; display: flex; justify-content: space-between; align-items: center; }
+.container { padding: 1.5rem; flex-grow: 1; max-width: 1800px; margin: 0 auto; width: 100%; }
+
+/* Buttons */
+.btn { padding: 0.5rem 1rem; border-radius: 0.375rem; border: none; cursor: pointer; font-size: 0.875rem; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; transition: 0.2s; }
+.btn-sm { padding: 0.25rem 0.5rem; font-size: 0.8rem; }
+.btn-primary { background: var(--primary); color: white; }
+.btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); }
+.btn-secondary { background: white; color: var(--secondary); border: 1px solid var(--border); }
+.btn-secondary:hover { background: var(--light); border-color: #b3b9be; }
+.btn-success { background: var(--success); color: white; }
+.btn-success:hover { background: #218838; transform: translateY(-1px); }
+.btn-danger { background: var(--danger); color: white; }
+.btn-action { background: none; border: none; cursor: pointer; padding: 4px; border-radius: 4px; font-size: 1rem; }
+.btn-action:hover { background-color: #e9ecef; }
+
+/* Dashboard Cards */
+.dashboard-card { background: white; border-radius: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid var(--border); padding: 1.25rem; display: flex; flex-direction: column; height: 100%; }
+.card-title { font-size: 1rem; font-weight: 700; margin-bottom: 1rem; color: var(--dark); display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--light); padding-bottom: 0.5rem; }
+
+/* View Controls */
+.view-controls { padding: 0.5rem 1.5rem; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 1rem; }
+.view-switcher { display: flex; background-color: var(--light); padding: 3px; border-radius: 0.375rem; }
+.view-switcher-btn { padding: 4px 12px; border: none; background: none; border-radius: 4px; font-weight: 500; color: var(--text-sub); cursor: pointer; font-size: 0.85rem; }
+.view-switcher-btn.active { background-color: white; color: var(--primary); box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+.filter-wrapper { display: flex; gap: 8px; justify-content: center; }
+.filter-wrapper select { padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; }
+
+/* Tables */
+.task-table { background: white; border-radius: 0.5rem; border: 1px solid var(--border); overflow: hidden; }
+.table-responsive { overflow-x: auto; width: 100%; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 1200px; }
+th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
+th { background: var(--light); font-weight: 600; color: var(--text-sub); font-size: 0.85rem; cursor: pointer; position: sticky; top: 0; z-index: 10; }
+th:hover { background-color: #e2e6ea; }
+.status-badge { padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+.status-completed { background: #d4edda; color: #155724; }
+.status-progress { background: #cce5ff; color: #004085; }
+.status-delayed { background: #fff3cd; color: #856404; }
+.status-pending { background: #e2e3e5; color: #383d41; }
+
+/* Modals */
+.modal { display: flex; position: fixed; inset: 0; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: var(--z-modal); animation: fadeIn 0.2s; }
+.modal-content { background: white; border-radius: 0.5rem; padding: 0; width: 90%; max-width: 500px; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+.modal-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 1.1rem; }
+.modal-body { padding: 1.5rem; overflow-y: auto; }
+.modal-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; background: var(--light); border-bottom-left-radius: 0.5rem; border-bottom-right-radius: 0.5rem; }
+
+/* Form Elements */
+.form-group { margin-bottom: 1rem; }
+.form-label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; color: var(--text-sub); }
+.form-input { width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 0.375rem; font-size: 0.9rem; }
+.form-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(0,123,255,0.1); }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+
+/* Calendar & Charts */
+.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); border: 1px solid var(--border); background: var(--border); gap: 1px; }
+.calendar-day { background: white; min-height: 120px; padding: 4px; display: flex; flex-direction: column; }
+.calendar-day-header { background: var(--light); padding: 8px; text-align: center; font-weight: bold; }
+.chart-container { position: relative; width: 100%; height: 100%; }
+
+/* Notifications */
+.notification-container { position: fixed; top: 20px; right: 20px; z-index: var(--z-toast); display: flex; flex-direction: column; gap: 10px; }
+.notification { background: white; color: var(--text-main); padding: 15px 20px; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: slideInRight 0.3s; display: flex; align-items: center; min-width: 280px; border-left: 4px solid transparent; }
+.notification-success { border-left-color: var(--success); }
+.notification-error { border-left-color: var(--danger); }
+
+/* Animations */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* Media Queries */
+@media (max-width: 768px) {
+  .app-layout { flex-direction: column; }
+  .sidebar { width: 100%; height: auto; }
+  .sidebar.collapsed { display: none; }
+  .view-controls { grid-template-columns: 1fr; gap: 0.5rem; }
+  .filter-wrapper { flex-direction: column; }
+  .form-row { grid-template-columns: 1fr; }
+  .division-dashboard { flex-direction: column; }
+  .group-dashboard-container { flex-direction: column; }
+  .calendar-grid { display: flex; flex-direction: column; } /* 모바일 달력 리스트뷰 변환 고려 */
+}
+
+
+/* === Category Management Tree Styles === */
+
+.category-management-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.category-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar-separator {
+  width: 1px;
+  background: #ccc;
+  margin: 0 5px;
+}
+
+/* 트리 구조 기본 설정 */
+.tree-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.tree-root, .tree-children {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* 자식 노드 들여쓰기 및 연결선 컨테이너 */
+.tree-children {
+  margin-left: 30px; /* 들여쓰기 간격 */
+  border-left: 2px dashed #dee2e6; /* 세로 연결선 */
+  position: relative;
+}
+
+.tree-node {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+/* 노드 앞의 가로 연결선 (Connectors) */
+.tree-children .tree-node::before {
+  content: '';
+  position: absolute;
+  top: 22px; /* 카드 높이의 절반 지점 */
+  left: -32px; /* 부모 세로선에서 시작 */
+  width: 32px;
+  height: 2px;
+  background-color: transparent;
+  border-top: 2px dashed #dee2e6;
+}
+
+/* 마지막 노드 처리: 세로선 끊기 */
+.tree-children .tree-node.is-last > .node-card {
+  /* 마지막 노드 이후에는 세로선이 보이지 않도록 처리 (필요시 구현) */
+}
+
+/* --- [핵심] Dark Card 디자인 --- */
+.node-card {
+  display: inline-flex;
+  align-items: center;
+  background-color: #2c3e50; /* 다크 블루 배경 */
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+  gap: 10px;
+  min-width: 450px; /* 고정 너비 혹은 fit-content */
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.node-card:hover {
+  transform: translateX(3px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  background-color: #34495e;
+}
+
+/* 레벨별 색상 차등 (옵션) */
+.tree-node.level-1 > .node-card { background-color: #212529; } /* 가장 어두움 */
+.tree-node.level-2 > .node-card { background-color: #343a40; }
+.tree-node.level-3 > .node-card { background-color: #495057; }
+
+/* 뱃지 스타일 */
+.node-badge {
+  font-size: 0.7rem;
+  font-weight: bold;
+  background-color: rgba(255,255,255,0.2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+/* 구분선 */
+.separator {
+  color: rgba(255,255,255,0.3);
+  font-size: 0.9rem;
+}
+
+/* 입력 필드 스타일 재정의 */
+.input-wrapper {
+  position: relative;
+}
+
+.node-input {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 0.95rem;
+  padding: 4px;
+  outline: none;
+  font-family: inherit;
+}
+
+.node-input::placeholder {
+  color: rgba(255,255,255,0.4);
+}
+
+.node-input:focus {
+  background-color: rgba(255,255,255,0.1);
+  border-radius: 4px;
+}
+
+.code-wrapper { width: 80px; }
+.code-wrapper .node-input { text-align: center; font-family: monospace; font-weight: bold; width: 100%; }
+.name-wrapper { flex: 1; }
+.name-wrapper .node-input { width: 100%; font-weight: 500; }
+
+/* 액션 버튼 */
+.node-actions {
+  display: flex;
+  gap: 5px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.node-card:hover .node-actions { opacity: 1; }
+
+.icon-btn {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: white;
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0;
+}
+
+.icon-btn:hover {
+  background: rgba(255,255,255,0.3);
+}
+
+.icon-btn.delete:hover {
+  background: #c0392b;
+  border-color: #c0392b;
+}
+
+.empty-tree-state {
+  text-align: center;
+  padding: 40px;
+  color: #adb5bd;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  border: 2px dashed #dee2e6;
+}
+
+/* === Category Table Styles (Simple Table) === */
+
+.cat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.cat-table th {
+  background-color: #f1f3f5;
+  color: #495057;
+  font-weight: 700;
+  padding: 12px 10px;
+  border-bottom: 2px solid #dee2e6;
+  text-align: left;
+}
+
+.cat-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e9ecef;
+  vertical-align: top; /* 셀 병합 시 내용 상단 정렬 */
+}
+
+/* 셀 병합 스타일 (Lv.1) */
+.cat-table td.merged-cell {
+  background-color: #fff; /* 병합된 셀 배경색 */
+  border-right: 1px solid #f1f3f5;
+}
+
+/* 입력 필드 스타일 */
+.cat-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background-color: transparent;
+  font-size: 0.95rem;
+  transition: all 0.2s;
+}
+
+.cat-input:hover {
+  background-color: #f8f9fa;
+  border-color: #e9ecef;
+}
+
+.cat-input:focus {
+  background-color: #fff;
+  border-color: #007bff;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0,123,255,0.1);
+}
+
+/* 코드 입력 필드 (강조) */
+.cat-input.code-input {
+  font-family: monospace;
+  font-weight: 600;
+  text-align: center;
+  color: #007bff;
+  background-color: #f8f9fa;
+}
+
+.code-cell {
+  text-align: center;
+  background-color: #fcfcfc;
+}
+
+/* 텍스트 버튼 (중분류 추가 등) */
+.text-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #007bff;
+  padding: 2px 0;
+  text-decoration: underline;
+}
+
+.text-btn:hover {
+  color: #0056b3;
+}
+
+.btn-action.delete {
+  font-size: 0.85rem;
+  color: #868e96;
+}
+.btn-action.delete:hover {
+  color: #fa5252;
+  background: none;
+}
+
+.cat-row:hover td:not(.merged-cell) {
+  background-color: #f8f9fa;
+}
+
+
+/* === Category Table Styles === */
+
+.cat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+  color: #333; /* 기본 글자색 검정 */
+}
+
+.cat-table th {
+  background-color: #f1f3f5;
+  color: #212529; /* 헤더 글자색 진한 검정 */
+  font-weight: 700;
+  padding: 12px 10px;
+  border-bottom: 2px solid #dee2e6;
+  text-align: left;
+}
+
+.cat-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e9ecef;
+  vertical-align: top;
+  color: #333; /* 셀 글자색 검정 */
+}
+
+/* 셀 병합 스타일 (Lv.1) */
+.cat-table td.merged-cell {
+  background-color: #fff;
+  border-right: 1px solid #f1f3f5;
+}
+
+/* 입력 필드 스타일 - 검정 글씨 강제 */
+.cat-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background-color: transparent;
+  font-size: 0.95rem;
+  transition: all 0.2s;
+  color: #333 !important; /* 중요: 글자색 검정 */
+}
+
+.cat-input::placeholder {
+  color: #adb5bd;
+}
+
+.cat-input:hover {
+  background-color: #f8f9fa;
+  border-color: #e9ecef;
+}
+
+.cat-input:focus {
+  background-color: #fff;
+  border-color: #007bff;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0,123,255,0.1);
+}
+
+/* 코드 입력 필드 */
+.cat-input.code-input {
+  font-family: monospace;
+  font-weight: 600;
+  text-align: center;
+  color: #007bff !important; /* 코드는 파란색 유지 */
+  background-color: #f8f9fa;
+}
+
+.code-cell {
+  text-align: center;
+  background-color: #fcfcfc;
+}
+
+/* 텍스트 버튼 */
+.text-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #007bff;
+  padding: 2px 0;
+  text-decoration: underline;
+}
+
+/* 삭제 버튼 텍스트 색상 */
+.btn-action.delete {
+  font-size: 0.85rem;
+  color: #495057; /* 짙은 회색 */
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.btn-action.delete:hover {
+  color: #fa5252; /* Hover 시 빨간색 */
+  background: rgba(250, 82, 82, 0.1);
+  border-radius: 4px;
+}
+/* =========================================
+   OBS Management Styles (신규 추가)
+   ========================================= */
+
+/* 전체 컨테이너: 흰색 박스 카드 형태 */
+.obs-container {
+  background-color: white;
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+/* 헤더 영역: 타이틀 및 설명 */
+.obs-header-section {
+  margin-bottom: 20px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 15px;
+}
+
+.obs-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.obs-desc {
+  font-size: 0.9rem;
+  color: #6c757d;
+  line-height: 1.4;
+}
+
+/* 툴바 영역: 우측 정렬된 버튼들 */
+.obs-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 15px;
+}
+
+/* 테이블 래퍼: 스크롤 처리 및 테두리 */
+.obs-table-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  background-color: #fff;
+}
+
+/* 테이블 기본 스타일 */
+.obs-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed; /* 컬럼 너비 고정 */
+}
+
+/* 테이블 헤더 */
+.obs-table th {
+  background-color: #f8f9fa;
+  color: #495057;
+  font-weight: 700;
+  padding: 12px 15px;
+  border-bottom: 1px solid #dee2e6;
+  border-right: 1px solid #dee2e6;
+  text-align: left;
+  font-size: 0.9rem;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+/* 테이블 셀 */
+.obs-table td {
+  padding: 10px 15px;
+  border-bottom: 1px solid #eee;
+  border-right: 1px solid #eee;
+  vertical-align: middle;
+}
+
+/* 마지막 행의 바텀 보더 제거 (옵션) */
+.obs-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* --- 내부 컨트롤 스타일 (Dropdown + Buttons) --- */
+
+/* 입력 그룹: Select와 버튼을 가로로 배치 */
+.obs-input-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+/* 드롭다운 Select 박스 */
+.obs-select {
+  flex: 1; /* 남은 공간 모두 차지 */
+  padding: 8px 10px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  color: #495057;
+  background-color: #fff;
+  cursor: pointer;
+  height: 38px; /* 버튼 높이와 맞춤 */
+  transition: border-color 0.2s;
+}
+
+.obs-select:focus {
+  outline: none;
+  border-color: #80bdff;
+  box-shadow: 0 0 0 2px rgba(0,123,255,.25);
+}
+
+/* 사각형 '+' 추가 버튼 */
+.obs-btn-add {
+  width: 38px;
+  height: 38px;
+  background-color: #6c757d; /* 짙은 회색 */
+  color: white;
+  border: none;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-weight: 400;
+  transition: background-color 0.2s;
+  flex-shrink: 0;
+}
+
+.obs-btn-add:hover {
+  background-color: #5a6268;
+}
+
+/* '관리' 버튼 (톱니바퀴) */
+.obs-btn-gear {
+  height: 38px;
+  padding: 0 12px;
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  flex-shrink: 0;
+  transition: background-color 0.2s;
+}
+
+.obs-btn-gear:hover {
+  background-color: #5a6268;
+}
+
+/* Lv.1 텍스트 표시 영역 */
+.obs-lv1-text {
+  font-weight: 600;
+  color: #333;
+  display: flex;
+  justify-content: space-between; /* 텍스트와 삭제버튼 양 끝 배치 */
+  align-items: center;
+  font-size: 0.95rem;
+}
+
+/* 삭제 버튼 (x) */
+.obs-btn-del {
+    background: none;
+    border: none;
+    color: #adb5bd;
+    cursor: pointer;
+    font-size: 1.2rem;
+    line-height: 1;
+    padding: 0 5px;
+    transition: color 0.2s;
+}
+
+.obs-btn-del:hover {
+    color: #dc3545; /* Hover시 빨간색 */
+}
+
+/* 빈 데이터 상태 */
+.obs-empty-state {
+    text-align: center;
+    color: #999;
+    padding: 40px;
+    font-style: italic;
+}
+/* ... (기존 스타일 유지) ... */
+
+/* =========================================
+   OBS Grid Editor Styles (신규 추가)
+   ========================================= */
+
+/* 그리드 입력 필드 공통 스타일 (Select & Input Text) */
+.obs-grid-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    color: #495057;
+    background-color: #fff;
+    height: 38px;
+    box-sizing: border-box; /* padding 포함 크기 계산 */
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+/* 입력 필드 포커스 효과 */
+.obs-grid-input:focus {
+    border-color: #80bdff;
+    outline: 0;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+/* 테이블 셀 패딩 조정 (입력 필드 꽉 차게) */
+.obs-table td {
+    padding: 8px; /* 기존보다 약간 줄임 */
+}
+
+/* 빈 상태 메시지 */
+.obs-empty-state {
+    text-align: center;
+    padding: 30px;
+    color: #999;
+    font-style: italic;
+}
