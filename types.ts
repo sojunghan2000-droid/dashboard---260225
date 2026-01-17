@@ -50,6 +50,8 @@ export type Task = {
   // - createdByRole !== 'admin' => Task 목록에서 '추가' 표기
   createdByRole?: UserRole;
   createdVia?: 'manual' | 'excel_upload' | 'integrated_upload' | 'unknown';
+  // Task 관리 업로드/표시용 등록구분 (예: R.0, R.1, NR.0 ...)
+  registration?: string;
   planned: Period;
   revisions: Revision[];
   actual: Period;
@@ -92,6 +94,14 @@ export type Team = {
   groups: Group[]; 
   categoryMaster: CategoryMaster;
   obsMaster?: CategoryMaster; // OBS 관리 데이터 (업무 구분과 분리)
+  // Task 신규 등록 시 OBS에 함께 저장되는 참조 데이터
+  obsTaskCatalog?: Array<{
+    taskCode: string;
+    taskName: string;
+    task1: string; // category3 (Task 1)
+    lv3Code?: string; // Task Code에서 추출한 Lv.3 코드(업무 코드 조합)
+    createdAt: string; // ISO
+  }>;
 };
 
 export type Department = { 
@@ -115,6 +125,9 @@ export type ViewType = 'department' | 'team' | 'group' | 'member';
 export type SortKey =
   | 'taskCode'
   | 'category'
+  | 'category1'
+  | 'category2'
+  | 'category3'
   | 'name'
   | 'assigneeName'
   | 'affiliation'

@@ -9,6 +9,21 @@ type MemberInfoForCode = {
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+const normalizeTaskCodeForCompare = (code: string): string => {
+  const raw = String(code || '').trim();
+  // Expected: DI-AI-NLP-PL01.02.04.01 (orgPrefix 3 parts + "-" + cat1Code + "." + NN "." + NN "." + NN)
+  const m = raw.match(/^([^-]+-[^-]+-[^-]+)-([A-Za-z0-9]+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!m) return raw;
+  const [, org, cat1, a, b, c] = m;
+  const aN = parseInt(a, 10);
+  const bN = parseInt(b, 10);
+  const cN = parseInt(c, 10);
+  if ([aN, bN, cN].some(x => Number.isNaN(x))) return raw;
+  return `${org}-${cat1}.${pad2(aN)}.${pad2(bN)}.${pad2(cN)}`;
+};
+
 const getCategory1Code = (category1: string): string => {
   if (!category1) return 'X01';
 
@@ -35,9 +50,15 @@ const buildOrgPrefix = (memberInfo: MemberInfoForCode): string => {
   return `${deptCode}-${teamCode}-${groupCode}`;
 };
 
-const getNextSequenceForPrefix = (existingTasks: Task[], prefixPattern: string): number => {
+const getNextSequenceForPrefix = (existingTasks: Task[], orgPrefix: string, cat1Code: string, cat2Index: number, cat3Index: number): number => {
   // We generate strictly monotonic: max(existing)+1 (never reuse gaps)
-  const re = new RegExp(`^${escapeRegExp(prefixPattern)}\\.(\\d+)(?:$|\\D)`);
+  // Support both padded and non-padded historical codes for cat2/cat3/seq
+  const re = new RegExp(
+    `^${escapeRegExp(orgPrefix)}-${escapeRegExp(cat1Code)}\\.` +
+      `0*${cat2Index}\\.` +
+      `0*${cat3Index}\\.` +
+      `(\\d+)(?:$|\\D)`
+  );
   let max = 0;
   for (const t of existingTasks) {
     const code = t.taskCode || '';
@@ -61,12 +82,6 @@ export const generateTaskCodeForTask2 = (params: {
 }): string => {
   const { taskName, category1, category2, category3, memberInfo, adminCategoryMaster, existingTasks } = params;
 
-  const trimmedName = (taskName || '').trim();
-  if (trimmedName) {
-    const existingSameName = existingTasks.find(t => (t.name || '').trim() === trimmedName);
-    if (existingSameName?.taskCode) return existingSameName.taskCode;
-  }
-
   if (!memberInfo || !category1 || !category2 || !category3) {
     const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
     return `T-${dateStr}-${Math.floor(Math.random() * 1000)}`;
@@ -82,13 +97,14 @@ export const generateTaskCodeForTask2 = (params: {
   const cat3Keys = cat1Data[category2] || [];
   const cat3Index = Math.max(1, cat3Keys.indexOf(category3) + 1);
 
-  const prefixPattern = `${orgPrefix}-${cat1Code}.${cat2Index}.${cat3Index}`;
+  const prefix = `${orgPrefix}-${cat1Code}.${pad2(cat2Index)}.${pad2(cat3Index)}`;
 
-  let seq = getNextSequenceForPrefix(existingTasks, prefixPattern);
-  let candidate = `${prefixPattern}.${seq}`;
-  while (existingTasks.some(t => t.taskCode === candidate)) {
+  let seq = getNextSequenceForPrefix(existingTasks, orgPrefix, cat1Code, cat2Index, cat3Index);
+  let candidate = `${prefix}.${pad2(seq)}`;
+  const normalizedCandidate = () => normalizeTaskCodeForCompare(candidate);
+  while (existingTasks.some(t => normalizeTaskCodeForCompare(t.taskCode || '') === normalizedCandidate())) {
     seq += 1;
-    candidate = `${prefixPattern}.${seq}`;
+    candidate = `${prefix}.${pad2(seq)}`;
   }
   return candidate;
 };

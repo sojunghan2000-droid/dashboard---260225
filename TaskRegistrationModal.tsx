@@ -109,6 +109,9 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
   const [formData, setFormData] = useState<NewTaskFormData>(getInitialFormData());
   const [showCategory3Dropdown, setShowCategory3Dropdown] = useState(false);
   const [category3Filter, setCategory3Filter] = useState('');
+  const [category3ActiveIndex, setCategory3ActiveIndex] = useState(0);
+  const [pendingTask, setPendingTask] = useState<Task | null>(null);
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
   // Admin의 업무 구분 마스터 데이터 (모든 팀에서 공통 사용)
   const adminCategoryMaster = useMemo(() => {
@@ -125,6 +128,16 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
       setFormData(getInitialFormData());
     }
   }, [isOpen, getInitialFormData]);
+
+  // ✅ ESC 키로 모달 닫기
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
 
   // Task 2 기반 Task Code 자동 생성 (Admin 마스터 기반 + 중복 없는 번호)
   useEffect(() => {
@@ -204,6 +217,51 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
     return allowed;
   }, [obsMaster, assigneeTeamName]);
 
+  // Task 1 후보(업무구분 Lv.3): "업무 구분" 마스터의 Lv.3를 평탄화 (✅ 코드 포함, ✅ 중복 허용)
+  const task1Entries = useMemo(() => {
+    const entries: Array<{ name: string; code: string; category1: string; category2: string }> = [];
+    const master = adminCategoryMaster || {};
+
+    Object.keys(master).forEach((cat1Key) => {
+      // 숫자로 시작하는 키(예: "1. ...")는 제외(기존 로직 유지)
+      if (/^\d+\.\s/.test(cat1Key)) return;
+      const lv2Obj = master[cat1Key] || {};
+      const cat1Code = (categoryCodeMapping.category1 as any)[String(cat1Key).split(' (')[0]] || '';
+      const lv2Keys = Object.keys(lv2Obj);
+      lv2Keys.forEach((cat2Key, idx2) => {
+        const lv3List = (lv2Obj as any)[cat2Key] || [];
+        if (!Array.isArray(lv3List)) return;
+        lv3List.forEach((lv3Name: string, idx3: number) => {
+          const name = String(lv3Name || '').trim();
+          if (!name) return;
+          if (!obsAllowedCategory3.has(name)) return; // OBS에 허용된 것만
+          const code = cat1Code
+            ? `${cat1Code}.${String(idx2 + 1).padStart(2, '0')}.${String(idx3 + 1).padStart(2, '0')}`
+            : '';
+          entries.push({ name, code, category1: cat1Key, category2: String(cat2Key) });
+        });
+      });
+    });
+
+    // 마스터에 없지만 OBS에 있는 값(안전장치)
+    obsAllowedCategory3.forEach((name) => {
+      const n = String(name || '').trim();
+      if (!n) return;
+      if (entries.some(e => e.name === n)) return;
+      entries.push({ name: n, code: '', category1: '', category2: '' });
+    });
+
+    return entries;
+  }, [adminCategoryMaster, obsAllowedCategory3]);
+
+  // 업무구분 1/2 선택 시: 해당 계층으로 Task 1 후보 제한(드롭다운만 제한, 입력은 가능)
+  const task1EntriesByHierarchy = useMemo(() => {
+    if (formData.category1 && formData.category2) {
+      return task1Entries.filter(e => e.category1 === formData.category1 && e.category2 === formData.category2);
+    }
+    return task1Entries;
+  }, [task1Entries, formData.category1, formData.category2]);
+
   // Lv.1 옵션 (OBS에 등록된 Task 1과 연결된 업무 구분 Lv.1만 표시)
   const category1Options = useMemo(() => {
     // OBS에 허용된 Lv.3가 없으면 업무구분 1도 표시하지 않음
@@ -256,27 +314,35 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
     return lv3List.filter((lv3: string) => obsAllowedCategory3.has(lv3));
   }, [formData.category1, formData.category2, adminCategoryMaster, obsAllowedCategory3]);
 
-  // 선택된 업무구분 1, 2에 해당하는 Lv.3 소분류 목록 (Task 1 드롭다운용)
-  const allCategory3Options = useMemo(() => {
-    // 업무구분 1과 2가 선택되지 않았으면 빈 배열
-    if (!formData.category1 || !formData.category2) {
-      return [];
-    }
-    
-    // 선택된 업무구분 1, 2에 해당하는 Lv.3 목록 가져오기
-    const lv3List = adminCategoryMaster[formData.category1]?.[formData.category2] || [];
-    
-    // OBS에 허용된 항목만 필터링
-    return lv3List.filter(lv3 => obsAllowedCategory3.has(lv3)).sort();
-  }, [formData.category1, formData.category2, adminCategoryMaster, obsAllowedCategory3]);
+  // 필터링된 Task 1 옵션 (입력 텍스트 기반) - ✅ 코드/중복 포함
+  const filteredTask1Entries = useMemo(() => {
+    const q = category3Filter.trim().toLowerCase();
+    const base = task1EntriesByHierarchy;
+    const list = q
+      ? base.filter(e => e.name.toLowerCase().includes(q) || (e.code || '').toLowerCase().includes(q))
+      : base;
+    return list.slice(0, 120);
+  }, [task1EntriesByHierarchy, category3Filter]);
 
-  // 필터링된 Lv.3 옵션 (입력 텍스트 기반)
-  const filteredCategory3Options = useMemo(() => {
-    if (!category3Filter) return allCategory3Options;
-    return allCategory3Options.filter(opt => 
-      opt.toLowerCase().includes(category3Filter.toLowerCase())
-    );
-  }, [allCategory3Options, category3Filter]);
+  useEffect(() => {
+    if (showCategory3Dropdown) setCategory3ActiveIndex(0);
+  }, [showCategory3Dropdown, category3Filter]);
+
+  // ✅ Task 1 선택 시 업무구분 1/2 자동 선택(계층 맞춤) - (코드/중복 대비)
+  const selectTask1Entry = useCallback((entry: { name: string; code: string; category1: string; category2: string }) => {
+    setFormData(prev => {
+      const next = {
+        ...prev,
+        category3: entry.name,
+        category1: entry.category1 || prev.category1,
+        category2: entry.category2 || prev.category2
+      };
+      if (next.category1 && next.category2 && next.category3) {
+        next.name = generateAutoTaskName(next.category1, next.category2, next.category3, existingTasks);
+      }
+      return next;
+    });
+  }, [existingTasks]);
 
   // 폼 필드 변경 핸들러
   const handleFieldChange = useCallback((field: keyof NewTaskFormData, value: string) => {
@@ -331,8 +397,8 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
     });
   }, [existingTasks]);
 
-  // 제출 핸들러
-  const handleSubmit = useCallback(() => {
+  // 제출 전 검증 + Task 빌드
+  const buildTaskOrErrors = useCallback((): { task: Task | null; errors: string[] } => {
     const errors: string[] = [];
 
     // 유효성 검사
@@ -351,10 +417,28 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
       errors.push('OBS Lv.2/3가 선택되지 않았습니다. 담당자의 팀에 OBS 배정이 필요합니다.');
     }
 
-    // 카테고리 선택 여부 확인
-    if (!formData.category1 || !formData.category2 || !formData.category3) {
-      errors.push('업무 구분 1, 2, Task 1은 필수 선택 항목입니다.');
+    // Task 1 필수 + OBS 등록된 Task 1만 허용
+    if (!formData.category3) {
+      errors.push('Task 1은 필수 입력 항목입니다.');
+    } else if (!obsAllowedCategory3.has(formData.category3)) {
+      errors.push('Task 1은 해당 부서/팀의 OBS Lv.3에 등록된 항목만 선택할 수 있습니다.');
     }
+
+    // 업무구분 1/2가 비어있으면 Task 1으로 경로를 결정해야 함(중복이면 선택 유도)
+    let resolvedCategory1 = formData.category1;
+    let resolvedCategory2 = formData.category2;
+    const matches = task1Entries.filter(e => e.name === formData.category3 && e.category1 && e.category2);
+    if ((!resolvedCategory1 || !resolvedCategory2) && matches.length === 1) {
+      resolvedCategory1 = matches[0].category1;
+      resolvedCategory2 = matches[0].category2;
+    } else if ((!resolvedCategory1 || !resolvedCategory2) && matches.length > 1) {
+      errors.push('동일한 Task 1 명칭이 여러 업무구분 경로에 존재합니다. 드롭다운에서 (코드) 포함 항목을 선택해주세요.');
+    }
+
+    // 업무구분 1/2가 선택된 경우:
+    // - 드롭다운은 계층 제한
+    // - 입력(Key-in)은 허용(신규 Task1 추가 가능)
+    //   => 여기서는 막지 않음
 
     // 날짜 유효성 검사
     if (!formData.plannedStart) {
@@ -377,25 +461,15 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
 
     // Task Code는 Task 2 기반으로 자동 생성되며(마스터 기반), 수동 입력을 받지 않습니다.
 
-    // 에러가 있으면 에러 모달 표시
-    if (errors.length > 0) {
-      if (onError) {
-        onError(errors);
-      } else {
-        alert(errors.join('\n'));
-      }
-      return;
-    }
+    if (errors.length > 0) return { task: null, errors };
 
-    // Lv.3 신규 항목이 마스터에 없으면 추가
-    if (formData.category1 && formData.category2 && formData.category3) {
-      const cat1Data = adminCategoryMaster[formData.category1] || {};
-      const cat3List = cat1Data[formData.category2] || [];
-      
-      // 마스터에 없는 신규 항목인 경우
+    // Lv.3 신규 항목이 마스터에 없으면 추가 (업무구분1/2가 선택되어 있는 경우에 한함)
+    if (resolvedCategory1 && resolvedCategory2 && formData.category3) {
+      const cat1Data = adminCategoryMaster[resolvedCategory1] || {};
+      const cat3List = cat1Data[resolvedCategory2] || [];
       if (!cat3List.includes(formData.category3)) {
         if (onUpdateCategoryMaster) {
-          onUpdateCategoryMaster(formData.category1, formData.category2, formData.category3);
+          onUpdateCategoryMaster(resolvedCategory1, resolvedCategory2, formData.category3);
           onNotification(`신규 업무 구분 Lv.3 "${formData.category3}"가 마스터에 추가되었습니다.`, 'success');
         }
       }
@@ -404,8 +478,8 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
     // Task Code 결정: Task 2 기반 자동 생성(중복 없는 번호)
     const taskCode = generateTaskCodeForTask2({
       taskName: formData.name,
-      category1: formData.category1,
-      category2: formData.category2,
+      category1: resolvedCategory1,
+      category2: resolvedCategory2,
       category3: formData.category3,
       memberInfo: memberInfo ? { department: memberInfo.department, team: memberInfo.team, group: memberInfo.group } : null,
       adminCategoryMaster,
@@ -417,8 +491,8 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
       id: `TASK-${Date.now()}`,
       taskCode,
       name: formData.name,
-      category1: formData.category1 || '',
-      category2: formData.category2 || '',
+      category1: resolvedCategory1 || '',
+      category2: resolvedCategory2 || '',
       category3: formData.category3 || '',
       department: memberInfo!.department || '미지정',
       team: memberInfo!.team,
@@ -442,10 +516,28 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
       isActive: true
     };
 
-    onSubmit(newTask);
-    onNotification(`Task 등록 완료 (Code: ${taskCode})`, 'success');
+    return { task: newTask, errors: [] };
+  }, [adminCategoryMaster, existingTasks, formData, obsAllowedCategory3, onNotification, onUpdateCategoryMaster, organization, task1Entries]);
+
+  const openConfirm = useCallback(() => {
+    const { task, errors } = buildTaskOrErrors();
+    if (errors.length > 0 || !task) {
+      if (onError) onError(errors);
+      else alert(errors.join('\n'));
+      return;
+    }
+    setPendingTask(task);
+    setIsConfirmOpen(true);
+  }, [buildTaskOrErrors, onError]);
+
+  const confirmSave = useCallback(() => {
+    if (!pendingTask) return;
+    onSubmit(pendingTask);
+    onNotification(`Task 등록 완료 (Code: ${pendingTask.taskCode})`, 'success');
+    setIsConfirmOpen(false);
+    setPendingTask(null);
     onClose();
-  }, [formData, organization, adminCategoryMaster, existingTasks, obsAllowedCategory3, onSubmit, onNotification, onClose, onUpdateCategoryMaster, onError]);
+  }, [onSubmit, onNotification, pendingTask, onClose]);
 
   if (!isOpen) return null;
 
@@ -536,9 +628,8 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
           </div>
         </div>
 
-        {/* Lv.3: Task 1 (항상 입력 가능, 커스텀 드롭다운으로 모든 업무 구분 Lv.3 소분류 참조) */}
-        <div className="form-row">
-          <div className="form-group" style={{ position: 'relative' }}>
+        {/* Lv.3: Task 1 */}
+        <div className="form-group" style={{ position: 'relative' }}>
             <label className="form-label">Task 1</label>
             <input
               type="text"
@@ -549,22 +640,42 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
                 setCategory3Filter(e.target.value);
                 setShowCategory3Dropdown(true);
               }}
-              onFocus={() => {
-                if (formData.category2) {
-                  setShowCategory3Dropdown(true);
-                  setCategory3Filter(formData.category3);
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  if (!showCategory3Dropdown) {
+                    setShowCategory3Dropdown(true);
+                    setCategory3ActiveIndex(0);
+                    return;
+                  }
+                  setCategory3ActiveIndex(i => Math.min(i + 1, Math.max(filteredTask1Entries.length - 1, 0)));
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setCategory3ActiveIndex(i => Math.max(i - 1, 0));
+                } else if (e.key === 'Enter') {
+                  if (showCategory3Dropdown && filteredTask1Entries.length > 0) {
+                    e.preventDefault();
+                    const pick = filteredTask1Entries[Math.min(category3ActiveIndex, filteredTask1Entries.length - 1)];
+                    if (pick) selectTask1Entry(pick);
+                    setCategory3Filter('');
+                    setShowCategory3Dropdown(false);
+                  }
                 }
+              }}
+              onFocus={() => {
+                setShowCategory3Dropdown(true);
+                setCategory3Filter(formData.category3);
               }}
               onBlur={(e) => {
                 // 드롭다운 클릭 시에는 닫히지 않도록 약간의 지연
                 setTimeout(() => setShowCategory3Dropdown(false), 200);
               }}
-              placeholder={formData.category2 ? "선택하거나 직접 입력" : "상위 항목 선택 필요"}
-              disabled={!formData.category2}
-              style={!formData.category2 ? disabledStyle : inputStyle}
+              placeholder={obsAllowedCategory3.size === 0 ? "OBS에 배정된 Task 1이 없습니다" : "Task 1을 선택하거나 입력"}
+              disabled={obsAllowedCategory3.size === 0}
+              style={obsAllowedCategory3.size === 0 ? disabledStyle : inputStyle}
             />
             {/* 커스텀 드롭다운 리스트 */}
-            {showCategory3Dropdown && formData.category2 && filteredCategory3Options.length > 0 && (
+            {showCategory3Dropdown && obsAllowedCategory3.size > 0 && filteredTask1Entries.length > 0 && (
               <div 
                 className="custom-dropdown"
                 style={{
@@ -583,36 +694,43 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
                 }}
                 onMouseDown={(e) => e.preventDefault()}
               >
-                {filteredCategory3Options.map(opt => (
+                {filteredTask1Entries.map((opt, idx) => {
+                  const label = opt.code ? `${opt.name} (${opt.code})` : opt.name;
+                  const isActive = idx === category3ActiveIndex;
+                  return (
                   <div
-                    key={opt}
+                    key={`${opt.name}__${opt.code}__${idx}`}
                     className="dropdown-option"
                     style={{
                       padding: '0.5rem 0.75rem',
                       cursor: 'pointer',
-                      borderBottom: '1px solid #f0f0f0'
+                      borderBottom: '1px solid #f0f0f0',
+                      backgroundColor: isActive ? '#e9f2ff' : '#fff'
                     }}
                     onMouseEnter={(e) => {
+                      setCategory3ActiveIndex(idx);
                       e.currentTarget.style.backgroundColor = '#f8f9fa';
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.backgroundColor = '#fff';
                     }}
                     onClick={() => {
-                      handleFieldChange('category3', opt);
+                      selectTask1Entry(opt);
                       setCategory3Filter('');
                       setShowCategory3Dropdown(false);
                     }}
                   >
-                    {opt}
+                    {label}
                   </div>
-                ))}
+                  );
+                })}
               </div>
           )}
         </div>
-          {/* Task 2 */}
+
+        {/* Task 2 (✅ Task 1 아래로 이동) */}
         <div className="form-group">
-            <label className="form-label">Task 2</label>
+          <label className="form-label">Task 2</label>
           <input
             type="text"
             className="form-input"
@@ -621,7 +739,6 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
             placeholder="Task명을 입력하세요"
             style={inputStyle}
           />
-          </div>
         </div>
 
         {/* Task Code 입력 필드 */}
@@ -728,11 +845,36 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
           <button className="btn btn-secondary" onClick={onClose}>
             취소
           </button>
-          <button className="btn btn-primary" onClick={handleSubmit}>
+          <button className="btn btn-primary" onClick={openConfirm}>
             저장
           </button>
         </div>
       </div>
+
+      {/* ✅ 저장 확인 모달 */}
+      {isConfirmOpen && pendingTask && (
+        <div className="modal show" onClick={(e) => e.target === e.currentTarget && setIsConfirmOpen(false)} style={{ zIndex: 11000 }}>
+          <div className="modal-content" style={{ maxWidth: '520px' }}>
+            <h3 className="modal-header">Task 등록 확인</h3>
+            <div className="modal-body">
+              <p style={{ marginTop: 0, whiteSpace: 'pre-line' }}>
+                {(() => {
+                  const raw = String(pendingTask.taskCode || '');
+                  const tail = raw.split('-').pop() || '';
+                  const lv3 = tail.split('.').slice(0, 3).join('.');
+                  const lv3Prefix = lv3.split('.')[0] || '';
+                  const displayName = `${pendingTask.category3}${lv3Prefix ? ` (${lv3Prefix})` : ''}_${pendingTask.category2}_${pendingTask.name}`;
+                  return `Task Code: ${pendingTask.taskCode}\n"${displayName}"(Task 2)을(를)\n과제를 등록합니다.\n`;
+                })()}
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setIsConfirmOpen(false)}>취소</button>
+              <button className="btn btn-primary" onClick={confirmSave}>확인</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

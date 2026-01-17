@@ -61,7 +61,8 @@ export const obsCodeMapping = {
     '1. 중점과제': 'O01',
     '2. 지시과제': 'O02',
     '3. 자체과제': 'O03',
-    '4. 기타': 'O04'
+    '4. 현장지원': 'O04',
+    '5. 기타': 'O05'
   },
   // Lv.2는 팀 이름에 따라 동적으로 생성 (orgCodeMapping.teams 사용)
   // Lv.3는 업무 구분 Lv.3 코드 사용 (categoryCodeMapping 사용)
@@ -246,7 +247,7 @@ export const generateAllTasks = (organization: Organization): Task[] => {
 
 // OBS 마스터 초기 데이터 생성 함수
 const createInitialOBSMaster = (teamName: string): CategoryMaster => {
-  const FIXED_LV1_OPTIONS = ["1. 중점과제", "2. 지시과제", "3. 자체과제", "4. 기타"];
+  const FIXED_LV1_OPTIONS = ["1. 중점과제", "2. 지시과제", "3. 자체과제", "4. 현장지원", "5. 기타"];
   const obsMaster: CategoryMaster = {};
   
   // 고정 Lv.1 옵션 초기화
@@ -345,6 +346,7 @@ const initialOrganizationData: Organization = {
             { id: 'emp33', name: '이승우', position: '프로' }, 
             { id: 'emp34', name: '김재석', position: '선임프로' }, 
             { id: 'emp35', name: '장경욱', position: '프로' },
+            { id: 'emp36', name: '장석부', position: '팀장', loginId: 'emp36', password: '1234', role: 'team_leader' },
             { id: 'a', name: '소중한', position: '프로' },
             { id: 'ceo01', name: '소병식', position: '실장', loginId: 'CEO', password: '1234', role: 'dept_head' }
           ] 
