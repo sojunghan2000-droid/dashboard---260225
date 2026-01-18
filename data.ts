@@ -46,12 +46,12 @@ export const orgCodeMapping = {
   },
   groups: {
     '자연어처리그룹': 'NLP', 
-    '컴퓨터비전그룹': 'CV', 
+    '컴퓨터비전그룹': 'CVG', 
     '머신러닝플랫폼그룹': 'MLP', 
     'TA그룹': 'TAG',
-    '융합S/W그룹': 'CSW', 
+    '융합S/W그룹': 'CSG', 
     '클라우드인프라그룹': 'CIG', 
-    'ENG혁신지원그룹': 'PSG'
+    'ENG혁신지원그룹': 'ENG'
   }
 };
 
@@ -70,28 +70,28 @@ export const obsCodeMapping = {
 
 // 업무 카테고리 마스터 데이터 (Category Master Data)
 export const categoryMasterData: CategoryMaster = {
-  '기획 (PL01)': { 
+  '기획': { 
     '전략기획': ['사업계획 수립', 'KPI 설정', '중장기 로드맵', '시장 동향 분석', '경쟁사 벤치마킹'],
     '프로젝트관리': ['WBS 작성', '일정/리소스 관리', '리스크 관리', '주간/월간 보고', '요구사항 정의'],
     '서비스기획': ['화면 설계(UI/UX)', '기능 명세서 작성', '사용자 시나리오', '정책 수립'],
   },
-  '현장지원 (FS01)': { 
+  '현장지원': { 
     '기술지원': ['VOC 분석 및 대응', '현장 트러블슈팅', '기술 자문', 'L1/L2 장애 지원'],
     '유지보수': ['정기 점검', '시스템 모니터링', '버그 패치', 'SW 버전 업데이트', '데이터 백업'],
     '교육지원': ['사용자 매뉴얼 작성', '운영자 교육', '기술 세미나 지원', 'FAQ 업데이트'],
   },
-  '기술 개발 (DV01)': { 
+  '기술 개발': { 
     'AI모델개발': ['데이터 전처리', '모델 학습/튜닝', 'RAG 시스템 구축', '모델 성능 평가', '프롬프트 엔지니어링'],
     '플랫폼개발': ['프론트엔드 개발', '백엔드 API 구축', 'DB 스키마 설계', '인터페이스 연동', '레거시 마이그레이션'],
     '인프라구축': ['클라우드(AWS/GCP) 환경셋업', 'CI/CD 파이프라인', '보안 그룹 설정', '서버 리소스 최적화'],
     '품질확보': ['단위/통합 테스트', '코드 리뷰', '성능 부하 테스트', '보안 취약점 점검'],
   },
-  '연구 (RS01)': { 
+  '연구': { 
     '선행연구': ['최신 논문 리뷰', '신기술 PoC', '알고리즘 프로토타이핑', '기술 타당성 검토'],
     '지식재산': ['특허 출원', '직무 발명 신고', '특허 침해 분석', '라이선스 검토'],
     '데이터연구': ['학습용 데이터셋 구축', '데이터 품질 검증', '데이터 레이블링 가이드', '합성 데이터 생성'],
   },
-  '기타 (OT01)': { 
+  '기타': { 
     '행정업무': ['비용 품의/정산', '구매 요청', '근태 관리', '비품 관리', '계약 관리'],
     '사내활동': ['팀 빌딩', '전사 타운홀 미팅', '사내 교육 수강', '멘토링 활동', '채용 면접 지원'],
   }
@@ -132,9 +132,30 @@ export const generateAllTasks = (organization: Organization): Task[] => {
       const cat3Keys = categoryMaster[category1][category2];
       const category3 = getRandomElement(cat3Keys);
       
-      const deptCode = (orgCodeMapping.departments as any)[member.department] || 'DXX';
-      const teamCode = (orgCodeMapping.teams as any)[member.team] || 'TXX';
-      const groupCode = (orgCodeMapping.groups as any)[member.group] || 'GXX';
+      // 조직 관리 화면의 코드 사용 (organization 객체에서 직접 가져오기)
+      let deptCode = 'DXX';
+      let teamCode = 'TXX';
+      let groupCode = 'GXX';
+      
+      for (const dept of organization.departments) {
+        if (dept.name === member.department) {
+          deptCode = (dept as any).code || String(organization.departments.indexOf(dept) + 1).padStart(2, '0');
+          for (const team of dept.teams) {
+            if (team.name === member.team) {
+              teamCode = (team as any).code || String(dept.teams.indexOf(team) + 1).padStart(2, '0');
+              for (const group of team.groups) {
+                if (group.name === member.group) {
+                  groupCode = (group as any).code || String(team.groups.indexOf(group) + 1).padStart(2, '0');
+                  break;
+                }
+              }
+              break;
+            }
+          }
+          break;
+        }
+      }
+      
       const orgPrefix = `${deptCode}-${teamCode}-${groupCode}`;
       
       const cat1Code = (categoryCodeMapping.category1 as any)[category1] || 'X01';
@@ -247,7 +268,7 @@ export const generateAllTasks = (organization: Organization): Task[] => {
 
 // OBS 마스터 초기 데이터 생성 함수
 const createInitialOBSMaster = (teamName: string): CategoryMaster => {
-  const FIXED_LV1_OPTIONS = ["1. 중점과제", "2. 지시과제", "3. 자체과제", "4. 현장지원", "5. 기타"];
+  const FIXED_LV1_OPTIONS = ["1. 중점과제", "2. 지시과제", "3. 자체과제", "4. 기타"];
   const obsMaster: CategoryMaster = {};
   
   // 고정 Lv.1 옵션 초기화
@@ -280,7 +301,7 @@ const createInitialOBSMaster = (teamName: string): CategoryMaster => {
 const initialOrganizationData: Organization = { 
   departments: [{ 
     id: 'dept1', 
-    name: 'ENG혁신실', 
+    name: 'ENG혁신실',
     teams: [
       { 
         id: 'team1', 
@@ -299,7 +320,7 @@ const initialOrganizationData: Organization = {
             name: '컴퓨터비전그룹', 
             members: [{ id: 'emp09', name: '임서준', position: '선임연구원' }] 
           }
-        ], 
+        ],
         categoryMaster: JSON.parse(JSON.stringify(categoryMasterData)),
         obsMaster: createInitialOBSMaster('AI개발팀')
       }, 
@@ -310,35 +331,35 @@ const initialOrganizationData: Organization = {
           id: 'group_ta1', 
           name: 'TA그룹', 
           members: [{ id: 'emp25', name: '정태영', position: '책임연구원' }] 
-        }], 
+        }],
         categoryMaster: JSON.parse(JSON.stringify(categoryMasterData)),
         obsMaster: createInitialOBSMaster('TA팀')
       }, 
       { 
         id: 'team3', 
-        name: '융합기술팀', 
+        name: '융합기술팀',
         groups: [{ 
           id: 'group_ct1', 
           name: '융합S/W그룹', 
           members: [{ id: 'emp28', name: '박지수', position: '수석연구원' }] 
-        }], 
+        }],
         categoryMaster: JSON.parse(JSON.stringify(categoryMasterData)),
         obsMaster: createInitialOBSMaster('융합기술팀')
       }, 
       { 
         id: 'team4', 
-        name: '기반기술팀', 
+        name: '기반기술팀',
         groups: [{ 
           id: 'group_bt1', 
           name: '클라우드인프라그룹', 
           members: [{ id: 'emp30', name: '김하은', position: '책임연구원' }] 
-        }], 
+        }],
         categoryMaster: JSON.parse(JSON.stringify(categoryMasterData)),
         obsMaster: createInitialOBSMaster('기반기술팀')
       }, 
       { 
         id: 'team5', 
-        name: 'ENG혁신지원그룹', 
+        name: 'ENG혁신지원그룹',
         groups: [{ 
           id: 'group_es1', 
           name: 'ENG혁신지원그룹', 
@@ -348,7 +369,7 @@ const initialOrganizationData: Organization = {
             { id: 'emp35', name: '장경욱', position: '프로' },
             { id: 'emp36', name: '장석부', position: '팀장', loginId: 'emp36', password: '1234', role: 'team_leader' },
             { id: 'a', name: '소중한', position: '프로' },
-            { id: 'ceo01', name: '소병식', position: '실장', loginId: 'CEO', password: '1234', role: 'dept_head' }
+            { id: 'ceo01', name: '소병식', position: '실장', loginId: 'cto', password: '1234', role: 'dept_head' }
           ] 
         }], 
         categoryMaster: JSON.parse(JSON.stringify(categoryMasterData)),
@@ -361,6 +382,26 @@ const initialOrganizationData: Organization = {
 // 초기 데이터 전체에 기본 계정 정보 주입하는 함수
 const hydrateMembersWithAuth = (org: Organization): Organization => { 
   const newOrg = JSON.parse(JSON.stringify(org)); 
+  // 부서, 팀, 그룹에 코드 설정 (orgCodeMapping 기반)
+  newOrg.departments.forEach((d: any) => {
+    // 부서 코드 설정
+    if (!d.code) {
+      d.code = (orgCodeMapping.departments as any)[d.name] || '';
+    }
+    d.teams.forEach((t: any) => {
+      // 팀 코드 설정
+      if (!t.code) {
+        t.code = (orgCodeMapping.teams as any)[t.name] || '';
+      }
+      t.groups.forEach((g: any) => {
+        // 그룹 코드 설정
+        if (!g.code) {
+          g.code = (orgCodeMapping.groups as any)[g.name] || '';
+        }
+      });
+    });
+  });
+  // 사용자 인증 정보 주입
   newOrg.departments.forEach((d: Department) => { 
     d.teams.forEach((t: Team) => { 
       t.groups.forEach((g: Group) => { 

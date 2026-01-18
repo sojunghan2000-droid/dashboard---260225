@@ -1,5 +1,5 @@
-import type { CategoryMaster, Task } from './types';
-import { categoryCodeMapping, orgCodeMapping } from './data';
+import type { CategoryMaster, Task, Organization } from './types';
+import { categoryCodeMapping } from './data';
 
 type MemberInfoForCode = {
   department: string;
@@ -43,10 +43,37 @@ const getCategory1Code = (category1: string): string => {
   return 'X01';
 };
 
-const buildOrgPrefix = (memberInfo: MemberInfoForCode): string => {
-  const deptCode = (orgCodeMapping.departments as any)[memberInfo.department] || 'DXX';
-  const teamCode = (orgCodeMapping.teams as any)[memberInfo.team] || 'TXX';
-  const groupCode = (orgCodeMapping.groups as any)[memberInfo.group] || 'GXX';
+const buildOrgPrefix = (memberInfo: MemberInfoForCode, organization?: Organization): string => {
+  let deptCode = 'DXX';
+  let teamCode = 'TXX';
+  let groupCode = 'GXX';
+  
+  // 조직 구조에서 코드 찾기 (조직 관리 화면에서 설정한 코드 우선 사용)
+  if (organization) {
+    for (const dept of organization.departments) {
+      if (dept.name === memberInfo.department) {
+        deptCode = (dept as any).code || String(organization.departments.indexOf(dept) + 1).padStart(2, '0');
+        for (const team of dept.teams) {
+          if (team.name === memberInfo.team) {
+            teamCode = (team as any).code || String(dept.teams.indexOf(team) + 1).padStart(2, '0');
+            for (const group of team.groups) {
+              if (group.name === memberInfo.group) {
+                groupCode = (group as any).code || String(team.groups.indexOf(group) + 1).padStart(2, '0');
+                break;
+              }
+            }
+            break;
+          }
+        }
+        break;
+      }
+    }
+  }
+  
+  // ✅ 모든 조직 코드는 조직 관리 화면을 따름 (기존 매핑 사용 안 함)
+  // 조직 구조에서 찾지 못한 경우에도 기존 매핑은 사용하지 않음
+  // 조직 관리 화면에서 설정한 코드만 사용 (코드가 없으면 인덱스 기반 생성)
+  
   return `${deptCode}-${teamCode}-${groupCode}`;
 };
 
@@ -79,15 +106,16 @@ export const generateTaskCodeForTask2 = (params: {
   memberInfo: MemberInfoForCode | null;
   adminCategoryMaster: CategoryMaster;
   existingTasks: Task[];
+  organization?: Organization; // 조직 구조 (코드 기반 생성용)
 }): string => {
-  const { taskName, category1, category2, category3, memberInfo, adminCategoryMaster, existingTasks } = params;
+  const { taskName, category1, category2, category3, memberInfo, adminCategoryMaster, existingTasks, organization } = params;
 
   if (!memberInfo || !category1 || !category2 || !category3) {
     const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
     return `T-${dateStr}-${Math.floor(Math.random() * 1000)}`;
   }
 
-  const orgPrefix = buildOrgPrefix(memberInfo);
+  const orgPrefix = buildOrgPrefix(memberInfo, organization);
   const cat1Code = getCategory1Code(category1);
 
   const cat1Data = adminCategoryMaster[category1] || {};

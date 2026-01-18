@@ -8,7 +8,7 @@ import type {
   UserContextType,
   NewTaskFormData 
 } from './types';
-import { categoryMasterData, categoryCodeMapping, orgCodeMapping } from './data';
+import { categoryMasterData, categoryCodeMapping } from './data';
 import { calculateWorkingDays, getTodayStr, numberToHHMM, hhmmToNumber, validateHHMM, normalizeHHMM, normalizeFlexibleHHMMInput } from './utils';
 import { generateTaskCodeForTask2 } from './taskCode';
 
@@ -164,7 +164,8 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
       category3: formData.category3,
       memberInfo: { department: memberInfo.department, team: memberInfo.team, group: memberInfo.group },
       adminCategoryMaster,
-      existingTasks
+      existingTasks,
+      organization // 조직 구조 전달 (코드 기반 생성용)
     });
 
     setFormData(prev => (prev.taskCode === nextCode ? prev : { ...prev, taskCode: nextCode }));

@@ -32,7 +32,6 @@ import type {
 import { 
   categoryMasterData, 
   categoryCodeMapping, 
-  orgCodeMapping, 
   obsCodeMapping,
   organizationData, 
   sampleData 
@@ -280,7 +279,7 @@ const filterTasksByDateRange = (tasks: Task[], startMonth: string, endMonth: str
 
 
 // --- Auth Helpers ---
-const getAccessibleTasks = (user: UserContextType, allTasks: Task[]): Task[] => {
+const getAccessibleTasks = (user: UserContextType, allTasks: Task[], org: Organization): Task[] => {
   if (!user) return [];
   const isDirector =
     user.role === 'dept_head' || (typeof user.position === 'string' && user.position.includes('실장'));
@@ -289,36 +288,36 @@ const getAccessibleTasks = (user: UserContextType, allTasks: Task[]): Task[] => 
   // 실장: 본인 실(Department) 전체
   if (isDirector) {
     const deptName = user.departmentId
-      ? organizationData.departments.find(d => d.id === user.departmentId)?.name
+      ? org.departments.find(d => d.id === user.departmentId)?.name
       : null;
     if (!deptName) return allTasks;
     return allTasks.filter(t => t.department === deptName);
   }
 
   if (user.role === 'team_leader') {
-    const myTeamName = organizationData.departments.flatMap(d => d.teams).find(t => t.id === user.teamId)?.name;
+    const myTeamName = org.departments.flatMap(d => d.teams).find(t => t.id === user.teamId)?.name;
     return allTasks.filter(t => t.team === myTeamName);
   }
   if (user.role === 'group_leader') {
-    const myGroupName = organizationData.departments.flatMap(d => d.teams.flatMap(t => t.groups)).find(g => g.id === user.groupId)?.name;
+    const myGroupName = org.departments.flatMap(d => d.teams.flatMap(t => t.groups)).find(g => g.id === user.groupId)?.name;
     return allTasks.filter(t => t.group === myGroupName);
   }
   return allTasks.filter(t => t.assignee === user.id);
 };
 
-const canReviewTask = (user: UserContextType, task: Task): boolean => {
+const canReviewTask = (user: UserContextType, task: Task, org: Organization): boolean => {
   if (!user) return false;
   const isDirector =
     user.role === 'dept_head' || (typeof user.position === 'string' && user.position.includes('실장'));
   if (user.role === 'admin') return true;
   if (isDirector) {
     const deptName = user.departmentId
-      ? organizationData.departments.find(d => d.id === user.departmentId)?.name
+      ? org.departments.find(d => d.id === user.departmentId)?.name
       : null;
     if (deptName && task.department === deptName) return true;
   }
-  if (user.role === 'team_leader' && task.team === organizationData.departments.flatMap(d => d.teams).find(t => t.id === user.teamId)?.name) return true;
-  if (user.role === 'group_leader' && task.group === organizationData.departments.flatMap(d => d.teams.flatMap(t => t.groups)).find(g => g.id === user.groupId)?.name) return true;
+  if (user.role === 'team_leader' && task.team === org.departments.flatMap(d => d.teams).find(t => t.id === user.teamId)?.name) return true;
+  if (user.role === 'group_leader' && task.group === org.departments.flatMap(d => d.teams.flatMap(t => t.groups)).find(g => g.id === user.groupId)?.name) return true;
   return false;
 };
 
@@ -665,6 +664,39 @@ const calculateLv2Stats = (tasks: Task[]) => {
 
   return { counts, totalLv2 };
 };
+
+// -----------------------------------------------------------------------------
+// [추가] Lv.3(Task 1) 기준 상태 집계 헬퍼 함수
+// - Key: Category1 > Category2 > Category3
+// -----------------------------------------------------------------------------
+const calculateLv3Stats = (tasks: Task[]) => {
+  const groups: Record<string, Task[]> = {};
+  tasks.forEach(task => {
+    const key = `${task.category1}||${task.category2}||${task.category3}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(task);
+  });
+
+  const counts = { 'completed': 0, 'in-progress': 0, 'delayed': 0, 'not-started': 0 };
+  let totalLv3 = 0;
+
+  Object.values(groups).forEach(groupTasks => {
+    if (groupTasks.length === 0) return;
+    totalLv3++;
+
+    const total = groupTasks.length;
+    const completedCount = groupTasks.filter(t => t.status === 'completed').length;
+    const delayedCount = groupTasks.filter(t => t.status === 'delayed').length;
+    const inProgressCount = groupTasks.filter(t => t.status === 'in-progress').length;
+
+    if (completedCount === total) counts['completed']++;
+    else if (delayedCount > 0) counts['delayed']++;
+    else if (inProgressCount > 0) counts['in-progress']++;
+    else counts['not-started']++;
+  });
+
+  return { counts, totalLv3 };
+};
 //0
 //2601080127
 
@@ -689,15 +721,27 @@ const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: 
     }] 
   };
   
-  // (나머지 막대 차트 및 로직은 Task 기준 유지 - MH 등은 Task 합산이 맞음)
+  // ✅ Trend(막대)도 업무구분 Lv.2 기준 "건수"로 표시
+  // - Plan: 계획 시작월 기준 Lv.2(Task) 건수
+  // - Actual: 실적 시작월 기준 Lv.2(Task) 건수
   const months = Array.from({ length: 12 }, (_, i) => `${i + 1}월`);
   const monthlyActual = new Array(12).fill(0);
   const monthlyPlan = new Array(12).fill(0);
-  const currentYear = targetYear; 
+  const currentYear = targetYear;
   tasks.forEach(task => {
-    if (task.actual.hours && task.actual.startDate) { const dist = distributeHoursByMonth(task.actual.startDate, task.actual.endDate, task.actual.hours, currentYear); dist.forEach((h, i) => monthlyActual[i] += h); }
     const plan = getCurrentPlan(task);
-    if (plan.hours && plan.startDate) { const dist = distributeHoursByMonth(plan.startDate, plan.endDate, plan.hours, currentYear); dist.forEach((h, i) => monthlyPlan[i] += h); }
+    if (plan.startDate) {
+      const d = new Date(plan.startDate);
+      if (!Number.isNaN(d.getTime()) && d.getFullYear() === currentYear) {
+        monthlyPlan[d.getMonth()] += 1;
+      }
+    }
+    if (task.actual.startDate) {
+      const d = new Date(task.actual.startDate);
+      if (!Number.isNaN(d.getTime()) && d.getFullYear() === currentYear) {
+        monthlyActual[d.getMonth()] += 1;
+      }
+    }
   });
   const barData = { labels: months, datasets: [ { label: 'Plan', data: monthlyPlan, backgroundColor: '#e0e0e0', hoverBackgroundColor: '#d6d6d6', barThickness: 8, categoryPercentage: 0.6, barPercentage: 0.9 }, { label: 'Actual', data: monthlyActual, backgroundColor: '#357abd', barThickness: 8, categoryPercentage: 0.6, barPercentage: 0.9 } ] };
   
@@ -705,13 +749,54 @@ const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: 
   // 여기서는 'Lv.1 과제 점유율'이므로 Task 개수 기준 유지 (또는 Lv.2 개수로 변경 가능). 
   // 요청사항은 "Progress Chart"이므로 위 donutData만 수정 적용함.
 
-  const categoryDist = useMemo(() => { const counts: Record<string, number> = {}; tasks.forEach(t => { const cat = t.category1 || '미분류'; counts[cat] = (counts[cat] || 0) + 1; }); return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count, percentage: (count / tasks.length) * 100 })); }, [tasks]);
+  // ✅ MBO 분포: 업무구분 Lv.2 기준 - "Lv.2 진행건수(Lv.3 진행건수)/Lv.2 총 건수(Lv.3 총 건수)" 형식
+  const lv2Dist = useMemo(() => {
+    const lv2Groups: Record<string, Task[]> = {};
+    tasks.forEach(t => {
+      const k1 = String(t.category1 || '').trim();
+      const k2 = String(t.category2 || '').trim();
+      const key = `${k1}||${k2}`;
+      if (!lv2Groups[key]) lv2Groups[key] = [];
+      lv2Groups[key].push(t);
+    });
+    
+    return Object.entries(lv2Groups)
+      .map(([key, groupTasks]) => {
+        const [c1, c2] = key.split('||');
+        const label = (c1 && c2) ? `${c2}` : (c2 || c1 || '미분류');
+        const fullLabel = (c1 && c2) ? `${c1} > ${c2}` : label;
+        
+        // Lv.2 총 건수: 해당 Lv.2 조합의 개수 (보통 1)
+        const lv2Total = 1;
+        // Lv.3 총 건수: 해당 Lv.2에 속한 모든 Task 개수
+        const lv3Total = groupTasks.length;
+        
+        // Lv.2 진행건수: 해당 Lv.2가 진행중/지연/완료 상태인지 (진행중인 Task가 하나라도 있으면 1)
+        const lv2InProgress = groupTasks.some(t => ['in-progress', 'delayed', 'completed'].includes(t.status)) ? 1 : 0;
+        // Lv.3 진행건수: 해당 Lv.2에 속한 Task 중 진행중/지연/완료인 Task 개수
+        const lv3InProgress = groupTasks.filter(t => ['in-progress', 'delayed', 'completed'].includes(t.status)).length;
+        
+        return {
+          key,
+          label,
+          fullLabel,
+          lv2InProgress,
+          lv3InProgress,
+          lv2Total,
+          lv3Total,
+          displayText: `(Lv.2) ${lv2InProgress}/${lv2Total}건, (Lv.3) ${lv3InProgress}/${lv3Total}건`,
+          percentage: (lv3Total / tasks.length) * 100
+        };
+      })
+      .sort((a, b) => b.lv3Total - a.lv3Total)
+      .slice(0, 5);
+  }, [tasks]);
   const getCategoryColor = (index: number) => ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796', '#5a5c69', '#f8f9fa'][index % 8];
 
   return (
     <div className="group-performance-card">
       <div className="group-card-header" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.name}</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.name} ({(group as any).code || group.id})</span>
         {onGoToGroup && (
           <button type="button" className="dash-nav-btn" onClick={() => onGoToGroup(group.id)} title="그룹 뷰로 이동">
             ›
@@ -738,7 +823,7 @@ const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: 
          <div className="group-stat-section trend">
             {/* ... (Trend 차트 부분 기존 동일) ... */}
            <div className="card-header-row">
-              <span className="mbo-section-title" style={{ borderBottom: 'none', marginBottom: 0, fontSize: '1rem' }}>Monthly Trend</span>
+              <span className="mbo-section-title" style={{ borderBottom: 'none', marginBottom: 0, fontSize: '1rem' }}>Monthly Trend (Count)</span>
               <div className="chart-legend-text">
                 <div className="legend-item"><span className="legend-dot" style={{background: '#e0e0e0'}}></span>Plan</div>
                 <div className="legend-item"><span className="legend-dot" style={{background: '#357abd'}}></span>Actual</div>
@@ -750,12 +835,21 @@ const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: 
          </div>
          <div className="group-stat-section mbo">
             {/* ... (MBO 부분 기존 동일) ... */}
-            <h4 className="mbo-section-title">Lv.1 과제 점유율 (Tasks)</h4>
+            <h4 className="mbo-section-title">업무구분 (진행 건/총 건)</h4>
             <div className="mbo-dist-container">
-                {categoryDist.slice(0, 5).map((item, idx) => (
-                    <div key={item.name} className="mbo-dist-item">
-                        <div className="mbo-dist-header"><span className="mbo-dist-name" title={item.name}>{item.name}</span><span className="mbo-dist-val">{item.percentage.toFixed(1)}%</span></div>
-                        <div className="mbo-dist-track"><div className="mbo-dist-fill" style={{ width: `${item.percentage}%`, backgroundColor: getCategoryColor(idx) }}></div></div>
+                {lv2Dist.map((item, idx) => (
+                    <div key={item.key} className="mbo-dist-item">
+                        <div className="mbo-dist-header">
+                          <span className="mbo-dist-name" title={item.fullLabel} style={{ fontSize: '0.85rem' }}>{item.label}</span>
+                          <span className="mbo-dist-val" style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }} title={`(Lv.2) ${item.lv2InProgress}/${item.lv2Total}건, (Lv.3) ${item.lv3InProgress}/${item.lv3Total}건`}>{item.displayText}</span>
+                        </div>
+                        <div className="mbo-dist-track">
+                          <div 
+                            className="mbo-dist-fill" 
+                            style={{ width: `${item.percentage}%`, backgroundColor: getCategoryColor(idx) }}
+                            title={`Lv.2 ${item.lv2InProgress}건, 진행률 ${item.percentage.toFixed(1)}%`}
+                          ></div>
+                        </div>
                     </div>
                 ))}
             </div>
@@ -796,27 +890,46 @@ const AssigneeListCard = ({
   onGoToMemberDashboard?: (memberId: string) => void;
 }) => {
   const groupStats = useMemo(() => {
-    const counts = { completed: 0, inProgress: 0, delayed: 0, notStarted: 0 };
-    tasks.forEach(t => { if (t.status === 'completed') counts.completed++; else if (t.status === 'in-progress') counts.inProgress++; else if (t.status === 'delayed') counts.delayed++; else counts.notStarted++; });
-    const total = tasks.length || 1;
-    return { ...counts, total, completionRate: ((counts.completed / total) * 100).toFixed(0) };
+    // ✅ 그룹 뷰(우측 담당자 카드) 집계는 업무구분 Lv.3(Task1) 기준
+    const { counts, totalLv3 } = calculateLv3Stats(tasks);
+    const total = totalLv3 || 1;
+    return {
+      completed: counts['completed'],
+      inProgress: counts['in-progress'],
+      delayed: counts['delayed'],
+      notStarted: counts['not-started'],
+      total,
+      completionRate: ((counts['completed'] / total) * 100).toFixed(0),
+      lv3Count: totalLv3
+    };
   }, [tasks]);
 
   const getMemberStats = (memberId: string) => {
     const memberTasks = tasks.filter(t => t.assignee === memberId);
-    const counts = { completed: 0, inProgress: 0, delayed: 0, notStarted: 0 };
-    memberTasks.forEach(t => { if (t.status === 'completed') counts.completed++; else if (t.status === 'in-progress') counts.inProgress++; else if (t.status === 'delayed') counts.delayed++; else counts.notStarted++; });
-    const total = memberTasks.length || 1;
-    return { ...counts, total, completionRate: ((counts.completed / total) * 100).toFixed(0), taskCount: memberTasks.length };
+    const { counts, totalLv3 } = calculateLv3Stats(memberTasks);
+    const total = totalLv3 || 1;
+    return {
+      completed: counts['completed'],
+      inProgress: counts['in-progress'],
+      delayed: counts['delayed'],
+      notStarted: counts['not-started'],
+      total,
+      completionRate: ((counts['completed'] / total) * 100).toFixed(0),
+      taskCount: totalLv3
+    };
   };
 
   return (
     <div className="dashboard-card assignee-card-v2" style={{ display: 'flex', flexDirection: 'column', padding: '1.5rem' }}>
-      <div className="assignee-card-header"><h3 className="group-name-title">{group.name}</h3><span className="total-task-badge">{tasks.length} Tasks</span></div>
+      <div className="assignee-card-header"><h3 className="group-name-title">{group.name} ({(group as any).code || ''})</h3><span className="total-task-badge">{groupStats.lv3Count} Lv.3</span></div>
       <div className="assignee-scroll-container">
         <div className="member-progress-item group-total-item">
           <div className="progress-info-row"><span className="label-text">Completion</span><span className="value-pct">{groupStats.completionRate}%</span></div>
-          <div className="stacked-progress-bar"><div className="progress-segment completed" style={{ width: `${(groupStats.completed / groupStats.total) * 100}%` }}></div><div className="progress-segment in-progress" style={{ width: `${(groupStats.inProgress / groupStats.total) * 100}%` }}></div><div className="progress-segment delayed" style={{ width: `${(groupStats.delayed / groupStats.total) * 100}%` }}></div></div>
+          <div className="stacked-progress-bar">
+            <div className="progress-segment completed" style={{ width: `${(groupStats.completed / groupStats.total) * 100}%` }} title={`완료: ${groupStats.completed}건`}></div>
+            <div className="progress-segment in-progress" style={{ width: `${(groupStats.inProgress / groupStats.total) * 100}%` }} title={`진행중: ${groupStats.inProgress}건`}></div>
+            <div className="progress-segment delayed" style={{ width: `${(groupStats.delayed / groupStats.total) * 100}%` }} title={`지연: ${groupStats.delayed}건`}></div>
+          </div>
         </div>
         {group.members.map(member => {
           const stats = getMemberStats(member.id);
@@ -837,7 +950,11 @@ const AssigneeListCard = ({
                 <span className="member-task-count">{stats.taskCount}</span>
               </div>
               <div className="progress-info-row small"><span className="label-text">Completion</span><span className="value-pct">{stats.completionRate}%</span></div>
-              <div className="stacked-progress-bar thinner"><div className="progress-segment completed" style={{ width: `${(stats.completed / stats.total) * 100}%` }}></div><div className="progress-segment in-progress" style={{ width: `${(stats.inProgress / stats.total) * 100}%` }}></div><div className="progress-segment delayed" style={{ width: `${(stats.delayed / stats.total) * 100}%` }}></div></div>
+              <div className="stacked-progress-bar thinner">
+                <div className="progress-segment completed" style={{ width: `${(stats.completed / stats.total) * 100}%` }} title={`완료: ${stats.completed}건`}></div>
+                <div className="progress-segment in-progress" style={{ width: `${(stats.inProgress / stats.total) * 100}%` }} title={`진행중: ${stats.inProgress}건`}></div>
+                <div className="progress-segment delayed" style={{ width: `${(stats.delayed / stats.total) * 100}%` }} title={`지연: ${stats.delayed}건`}></div>
+              </div>
             </div>
           );
         })}
@@ -869,9 +986,9 @@ const GroupDashboard: React.FC<{
 
   // ✅ 모든 권한자가 Progress/Trend/Monthly 대시보드를 볼 수 있도록 허용
 
-  // [변경] Lv.2 집계 함수 사용
-  const { counts: statusCounts, totalLv2 } = useMemo(() => calculateLv2Stats(tasks), [tasks]);
-  const totalLv2Count = totalLv2 || 1;
+  // ✅ 그룹 뷰 상단 대시보드 집계는 업무구분 Lv.3(Task1) 기준
+  const { counts: statusCounts, totalLv3 } = useMemo(() => calculateLv3Stats(tasks), [tasks]);
+  const totalLv3Count = totalLv3 || 1;
 
   const donutData = { labels: ['Finished', 'On-Going', 'Delayed', 'Not Started'], datasets: [{ data: [statusCounts['completed'], statusCounts['in-progress'], statusCounts['delayed'], statusCounts['not-started']], backgroundColor: ['#d9534f', '#5bc0de', '#f0ad4e', '#e2e3e5'], borderWidth: 0 }] };
   
@@ -916,21 +1033,20 @@ const GroupDashboard: React.FC<{
       <div className="group-dashboard-container">
         <div className="group-dashboard-left">
         <div className="dashboard-card status-card">
-           <h3 className="card-title">Progress and Status <span className="sub-title">Lv.2 과제 수행 현황</span></h3>
+           <h3 className="card-title">Progress and Status <span className="sub-title">Lv.3(Task1) 수행 현황</span></h3>
            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '220px' }}>
              <div style={{ width: '160px', height: '160px', position: 'relative' }}>
                <ChartCanvas type="doughnut" data={donutData} options={{ cutout: '60%', plugins: { legend: { display: false } } }} />
                <div className="donut-center-text">
-                   {/* [변경] 중앙 텍스트를 Lv.2 총 개수로 변경 */}
-                   <span className="donut-total" style={{ fontSize: '2rem' }}>{totalLv2}</span>
-                   <div style={{fontSize: '0.8rem', color: '#888'}}>Lv.2</div>
+                   <span className="donut-total" style={{ fontSize: '2rem' }}>{totalLv3}</span>
+                   <div style={{fontSize: '0.8rem', color: '#888'}}>Lv.3</div>
                </div>
              </div>
              <div className="donut-legend-vertical">
-               <div className="legend-row"><span className="dot" style={{ background: '#5bc0de' }}></span> On-Going <span className="val">{statusCounts['in-progress']}</span> <span className="pct">{((statusCounts['in-progress'] / totalLv2Count) * 100).toFixed(1)}%</span></div>
-               <div className="legend-row"><span className="dot" style={{ background: '#f0ad4e' }}></span> Delayed <span className="val">{statusCounts['delayed']}</span> <span className="pct">{((statusCounts['delayed'] / totalLv2Count) * 100).toFixed(1)}%</span></div>
-               <div className="legend-row"><span className="dot" style={{ background: '#e2e3e5' }}></span> Not Started <span className="val">{statusCounts['not-started']}</span> <span className="pct">{((statusCounts['not-started'] / totalLv2Count) * 100).toFixed(1)}%</span></div>
-               <div className="legend-row"><span className="dot" style={{ background: '#d9534f' }}></span> Finished <span className="val">{statusCounts['completed']}</span> <span className="pct">{((statusCounts['completed'] / totalLv2Count) * 100).toFixed(1)}%</span></div>
+               <div className="legend-row"><span className="dot" style={{ background: '#5bc0de' }}></span> On-Going <span className="val">{statusCounts['in-progress']}</span> <span className="pct">{((statusCounts['in-progress'] / totalLv3Count) * 100).toFixed(1)}%</span></div>
+               <div className="legend-row"><span className="dot" style={{ background: '#f0ad4e' }}></span> Delayed <span className="val">{statusCounts['delayed']}</span> <span className="pct">{((statusCounts['delayed'] / totalLv3Count) * 100).toFixed(1)}%</span></div>
+               <div className="legend-row"><span className="dot" style={{ background: '#e2e3e5' }}></span> Not Started <span className="val">{statusCounts['not-started']}</span> <span className="pct">{((statusCounts['not-started'] / totalLv3Count) * 100).toFixed(1)}%</span></div>
+               <div className="legend-row"><span className="dot" style={{ background: '#d9534f' }}></span> Finished <span className="val">{statusCounts['completed']}</span> <span className="pct">{((statusCounts['completed'] / totalLv3Count) * 100).toFixed(1)}%</span></div>
              </div>
            </div>
         </div>
@@ -1074,9 +1190,9 @@ const GroupDashboard: React.FC<{
 
 
 const TeamCard: React.FC<{ team: Team, tasks: Task[], targetYear: number, onGoToTeam?: (teamId: string) => void }> = ({ team, tasks, targetYear, onGoToTeam }) => {
-  const statusCounts = { 'completed': 0, 'in-progress': 0, 'delayed': 0, 'not-started': 0 };
-  tasks.forEach(t => { if (statusCounts[t.status] !== undefined) statusCounts[t.status]++; });
-  const total = tasks.length;
+  // ✅ 실 대시보드(팀 카드) 집계는 업무구분 Lv.2 기준
+  const { counts: statusCounts, totalLv2 } = useMemo(() => calculateLv2Stats(tasks), [tasks]);
+  const total = totalLv2 || 0;
   const completionRate = total > 0 ? ((statusCounts['completed'] / total) * 100).toFixed(0) : '0';
   const [tooltipData, setTooltipData] = useState<{ label: string, count: number, pct: string, color: string } | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
@@ -1093,21 +1209,21 @@ const TeamCard: React.FC<{ team: Team, tasks: Task[], targetYear: number, onGoTo
       <div className="dashboard-card team-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', height: '100%', gap: '15px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-              <h3 style={{ margin: 0, fontSize: '1.2em', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.name}</h3>
+              <h3 style={{ margin: 0, fontSize: '1.2em', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.name} ({(team as any).code || ''})</h3>
               {onGoToTeam && (
                 <button type="button" className="dash-nav-btn" onClick={() => onGoToTeam(team.id)} title="팀 뷰로 이동">
                   ›
                 </button>
               )}
             </div>
-            <span style={{ fontSize: '0.9em', color: '#6c757d', flexShrink: 0 }}>{total} Tasks</span>
+            <span style={{ fontSize: '0.9em', color: '#6c757d', flexShrink: 0 }}>{total} Lv.2</span>
           </div>
           <div style={{ flexShrink: 0, position: 'relative' }}>
              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9em', marginBottom: '6px', color: '#333' }}><span style={{ fontWeight: 500 }}>Completion</span><span style={{ fontWeight: 700 }}>{completionRate}%</span></div>
              <div style={{ height: '8px', background: '#e9ecef', borderRadius: '4px', overflow: 'hidden', display: 'flex' }}>
-              <div style={{ width: `${(statusCounts['completed'] / total) * 100}%`, background: '#f6ad55', cursor: 'pointer' }} onMouseEnter={() => handleMouseEnter('Completed', statusCounts['completed'], '#f6ad55')} onMouseLeave={handleMouseLeave}></div>
-              <div style={{ width: `${(statusCounts['in-progress'] / total) * 100}%`, background: '#63b3ed', cursor: 'pointer' }} onMouseEnter={() => handleMouseEnter('In Progress', statusCounts['in-progress'], '#63b3ed')} onMouseLeave={handleMouseLeave}></div>
-              <div style={{ width: `${(statusCounts['delayed'] / total) * 100}%`, background: '#fc8181', cursor: 'pointer' }} onMouseEnter={() => handleMouseEnter('Delayed', statusCounts['delayed'], '#fc8181')} onMouseLeave={handleMouseLeave}></div>
+              <div style={{ width: `${total > 0 ? (statusCounts['completed'] / total) * 100 : 0}%`, background: '#f6ad55', cursor: 'pointer' }} onMouseEnter={() => handleMouseEnter('Completed', statusCounts['completed'], '#f6ad55')} onMouseLeave={handleMouseLeave}></div>
+              <div style={{ width: `${total > 0 ? (statusCounts['in-progress'] / total) * 100 : 0}%`, background: '#63b3ed', cursor: 'pointer' }} onMouseEnter={() => handleMouseEnter('In Progress', statusCounts['in-progress'], '#63b3ed')} onMouseLeave={handleMouseLeave}></div>
+              <div style={{ width: `${total > 0 ? (statusCounts['delayed'] / total) * 100 : 0}%`, background: '#fc8181', cursor: 'pointer' }} onMouseEnter={() => handleMouseEnter('Delayed', statusCounts['delayed'], '#fc8181')} onMouseLeave={handleMouseLeave}></div>
             </div>
             {showTooltip && tooltipData && (<div style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', marginBottom: '8px', backgroundColor: 'rgba(40, 44, 52, 0.95)', color: 'white', padding: '8px 12px', borderRadius: '4px', fontSize: '0.85rem', whiteSpace: 'nowrap', zIndex: 10, boxShadow: '0 2px 5px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', gap: '8px' }}> <span style={{ display: 'inline-block', width: '10px', height: '10px', backgroundColor: tooltipData.color, borderRadius: '2px' }}></span> <span>{tooltipData.label}: <strong>{tooltipData.count}건</strong> ({tooltipData.pct}%)</span> <div style={{ position: 'absolute', top: '100%', left: '50%', marginLeft: '-5px', borderWidth: '5px', borderStyle: 'solid', borderColor: 'rgba(40, 44, 52, 0.95) transparent transparent transparent' }}></div> </div>)}
           </div>
@@ -1122,7 +1238,16 @@ const TeamCard: React.FC<{ team: Team, tasks: Task[], targetYear: number, onGoTo
             <div style={{ flex: 1, width: '100%', position: 'relative' }}><ChartCanvas type="line" data={chartData} options={chartOptions} /></div>
           </div>
           <div className="team-groups-list" style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: 'auto', flexShrink: 0 }}>
-            {team.groups.map(g => (<div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9em', color: '#555', padding: '3px 0' }}><span>{g.name}</span><span style={{ fontWeight: 600 }}>{tasks.filter(t => t.group === g.name).length}</span></div>))}
+            {team.groups.map(g => {
+              const groupTasks = tasks.filter(t => t.group === g.name);
+              const { totalLv2: gLv2 } = calculateLv2Stats(groupTasks);
+              return (
+                <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9em', color: '#555', padding: '3px 0' }}>
+                  <span>{g.name}</span>
+                  <span style={{ fontWeight: 600 }}>{gLv2}</span>
+                </div>
+              );
+            })}
           </div>
       </div>
   );
@@ -1133,7 +1258,10 @@ const TeamCard: React.FC<{ team: Team, tasks: Task[], targetYear: number, onGoTo
 // [수정 3] DivisionDashboard (실/부문 대시보드)
 // -----------------------------------------------------------------------------
 const DivisionDashboard = ({ data, tasks, targetYear, onGoToTeam }: { data: SampleData, tasks: Task[], targetYear: number, onGoToTeam?: (teamId: string) => void }) => {
-  const allTasks = useMemo(() => tasks.filter(t => t.isActive !== false), [tasks]);
+  // ✅ 실(Department) 대시보드 집계는 "모든 팀원(Task)" 기준
+  // - 호출부에서 이미 실 범위/기간 필터를 적용해 전달
+  // - 여기서는 추가 필터(활성/비활성)를 강제하지 않음
+  const allTasks = useMemo(() => tasks, [tasks]);
   const teams = data.organization.departments[0].teams;
 
   // [변경] Lv.2 집계 함수 사용
@@ -1409,73 +1537,471 @@ const MemberDashboardV2: React.FC<{ tasks: Task[], startMonth: string, endMonth:
   );
 };
 
-const OrgManagementTab = ({ organization, onAdd, onDelete }: { organization: Organization, onAdd: Function, onDelete: Function }) => {
-  const [newItemName, setNewItemName] = useState('');
-  const [addingLevel, setAddingLevel] = useState<null | { level: 'department' | 'team' | 'group', parentIds?: { departmentId?: string, teamId?: string } }>(null);
-  const handleStartAdd = (level: 'department' | 'team' | 'group', parentIds = {}) => { setAddingLevel({ level, parentIds }); setNewItemName(''); };
-  const handleConfirmAdd = () => { if (newItemName.trim() && addingLevel) { onAdd(addingLevel.level, newItemName.trim(), addingLevel.parentIds); setAddingLevel(null); } };
-  const renderAddForm = (level: 'department' | 'team' | 'group', parentIds = {}) => {
-    const isAddingHere = addingLevel && addingLevel.level === level && JSON.stringify(addingLevel.parentIds) === JSON.stringify(parentIds);
-    if (isAddingHere) { 
-      return (
-        <li className="category-input-form-container"> <div className="category-input-form"> <input type="text" value={newItemName} onChange={(e) => setNewItemName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleConfirmAdd()} placeholder="이름 입력" autoFocus /> <button className="btn-action save" onClick={handleConfirmAdd}>✓</button> <button className="btn-action cancel" onClick={() => setAddingLevel(null)}>×</button> </div> </li>
-      ); 
+const OrgManagementTab = ({ organization, onAdd, onDelete, onUpdateOrg }: { organization: Organization, onAdd: Function, onDelete: Function, onUpdateOrg: (org: Organization) => void }) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
+  const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
+
+  // 행 개수 계산 (rowspan용)
+  const getRowSpan = useCallback((dept: Department) => {
+    let count = 0;
+    if (dept.teams.length === 0) return 1;
+    dept.teams.forEach(team => {
+      if (team.groups.length === 0) {
+        count += 1;
+      } else {
+        count += team.groups.length;
+      }
+    });
+    return count || 1;
+  }, []);
+
+  const getTeamRowSpan = useCallback((team: Team) => {
+    return team.groups.length || 1;
+  }, []);
+
+  // 조직명/코드 변경 핸들러
+  const handleChange = useCallback((level: 1 | 2 | 3, id: string, field: 'name' | 'code', value: string, deptId?: string, teamId?: string) => {
+    let newOrg = JSON.parse(JSON.stringify(organization));
+    
+    // 코드 중복 체크
+    if (field === 'code') {
+      if (level === 1) {
+        // Lv.1 코드 중복 체크 (다른 실과 비교)
+        const duplicate = newOrg.departments.find((d: Department, idx: number) => d.id !== id && (d as any).code === value && value.trim() !== '');
+        if (duplicate) {
+          alert(`Lv.1 코드 "${value}"는 이미 사용 중입니다.`);
+          return;
+        }
+      } else if (level === 2 && deptId) {
+        // Lv.2 코드 중복 체크 (같은 실 내 다른 팀과 비교)
+        const dept = newOrg.departments.find((d: Department) => d.id === deptId);
+        const duplicate = dept?.teams.find((t: Team, idx: number) => t.id !== id && (t as any).code === value && value.trim() !== '');
+        if (duplicate) {
+          alert(`Lv.2 코드 "${value}"는 같은 실 내에서 이미 사용 중입니다.`);
+          return;
+        }
+      } else if (level === 3 && deptId && teamId) {
+        // Lv.3 코드 중복 체크 (같은 팀 내 다른 그룹과 비교)
+        const dept = newOrg.departments.find((d: Department) => d.id === deptId);
+        const team = dept?.teams.find((t: Team) => t.id === teamId);
+        const duplicate = team?.groups.find((g: Group, idx: number) => g.id !== id && (g as any).code === value && value.trim() !== '');
+        if (duplicate) {
+          alert(`Lv.3 코드 "${value}"는 같은 팀 내에서 이미 사용 중입니다.`);
+          return;
+        }
+      }
     }
-    return null;
+    
+    if (level === 1) {
+      const dept = newOrg.departments.find((d: Department) => d.id === id);
+      if (dept) {
+        if (field === 'name') {
+          dept.name = value;
+        } else if (field === 'code') {
+          (dept as any).code = value;
+        }
+      }
+    } else if (level === 2 && deptId) {
+      const dept = newOrg.departments.find((d: Department) => d.id === deptId);
+      const team = dept?.teams.find((t: Team) => t.id === id);
+      if (team) {
+        if (field === 'name') {
+          team.name = value;
+        } else if (field === 'code') {
+          (team as any).code = value;
+        }
+      }
+    } else if (level === 3 && deptId && teamId) {
+      const dept = newOrg.departments.find((d: Department) => d.id === deptId);
+      const team = dept?.teams.find((t: Team) => t.id === teamId);
+      const group = team?.groups.find((g: Group) => g.id === id);
+      if (group) {
+        if (field === 'name') {
+          group.name = value;
+        } else if (field === 'code') {
+          (group as any).code = value;
+        }
+      }
+    }
+    onUpdateOrg(newOrg);
+  }, [organization, onUpdateOrg]);
+
+  // 조직 데이터 내보내기
+  const handleDownloadTemplate = () => {
+    const wsData = [['Lv.1 코드', '*Lv.1 실', 'Lv.2 코드', '*Lv.2 팀', 'Lv.3 코드', '*Lv.3 그룹']];
+    
+    // 현재 조직 데이터를 평탄화하여 엑셀 데이터로 변환
+    organization.departments.forEach((dept, deptIdx) => {
+      const deptCode = (dept as any).code || String(deptIdx + 1).padStart(2, '0');
+      
+      if (dept.teams.length === 0) {
+        // 실만 있고 팀이 없는 경우
+        wsData.push([deptCode, dept.name, '', '', '', '']);
+      } else {
+        dept.teams.forEach((team, teamIdx) => {
+          const teamCode = (team as any).code || String(teamIdx + 1).padStart(2, '0');
+          
+          if (team.groups.length === 0) {
+            // 팀만 있고 그룹이 없는 경우
+            wsData.push([deptCode, dept.name, teamCode, team.name, '', '']);
+          } else {
+            // 그룹이 있는 경우
+            team.groups.forEach((group, groupIdx) => {
+              const groupCode = (group as any).code || String(groupIdx + 1).padStart(2, '0');
+              wsData.push([deptCode, dept.name, teamCode, team.name, groupCode, group.name]);
+            });
+          }
+        });
+      }
+    });
+    
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!cols'] = [{ wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 20 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Organization_List");
+
+    // 주의사항 시트 추가
+    const noticeData = [
+      ['조직 관리 템플릿 입력 주의사항'],
+      ['- "*" 표시는 필수 입력입니다.'],
+      ['- 코드는 자동 생성되며, 수동 입력도 가능합니다.'],
+      ['- Lv.1 코드는 전체 조직에서 고유해야 합니다.'],
+      ['- Lv.2 코드는 같은 Lv.1 내에서 고유해야 합니다.'],
+      ['- Lv.3 코드는 같은 Lv.2 내에서 고유해야 합니다.'],
+      ['- 빈 행은 무시됩니다.'],
+    ];
+    const noticeWs = XLSX.utils.aoa_to_sheet(noticeData);
+    noticeWs['!cols'] = [{ wch: 110 }];
+    XLSX.utils.book_append_sheet(wb, noticeWs, "주의사항");
+
+    XLSX.writeFile(wb, `Organization_Master_Data.xlsx`);
   };
+
+  // 엑셀 업로드
+  const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.readAsArrayBuffer(file);
+
+    reader.onload = (event) => {
+      try {
+        const data = event.target?.result;
+        if (!data) return;
+
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }) as any[][];
+
+        if (!jsonData || jsonData.length < 2) {
+          alert('엑셀 파일에 데이터가 없습니다.');
+          if (fileInputRef.current) fileInputRef.current.value = '';
+          return;
+        }
+
+        // 헤더 제외하고 데이터 파싱
+        const uploadData = jsonData.slice(1);
+        const newOrg = JSON.parse(JSON.stringify(organization));
+        const errors: string[] = [];
+        let addedCount = 0;
+
+        const norm = (v: any) => (v ?? '').toString().trim();
+
+        // 코드 중복 체크를 위한 맵
+        const deptCodeMap = new Map<string, string>(); // code -> deptId
+        const teamCodeMap = new Map<string, Map<string, string>>(); // deptId -> (code -> teamId)
+        const groupCodeMap = new Map<string, Map<string, Map<string, string>>>(); // deptId -> teamId -> (code -> groupId)
+
+        uploadData.forEach((row, index) => {
+          const rowIndex = index + 2; // 헤더 제외하고 실제 행 번호
+          const [deptCode, deptName, teamCode, teamName, groupCode, groupName] = row;
+
+          const deptCodeV = norm(deptCode);
+          const deptNameV = norm(deptName);
+          const teamCodeV = norm(teamCode);
+          const teamNameV = norm(teamName);
+          const groupCodeV = norm(groupCode);
+          const groupNameV = norm(groupName);
+
+          // 빈 행은 무시
+          if (!deptNameV && !teamNameV && !groupNameV) {
+            return;
+          }
+
+          // 필수 항목 체크
+          if (!deptNameV) {
+            errors.push(`행 ${rowIndex}: Lv.1 실명은 필수입니다.`);
+            return;
+          }
+
+          // 실 찾기 또는 생성
+          let dept = newOrg.departments.find((d: Department) => d.name === deptNameV);
+          if (!dept) {
+            const newDeptId = `dept-${Date.now()}-${Math.random()}`;
+            dept = {
+              id: newDeptId,
+              name: deptNameV,
+              teams: []
+            };
+            (dept as any).code = deptCodeV || '';
+            newOrg.departments.push(dept);
+            addedCount++;
+          } else if (deptCodeV) {
+            // 기존 실이 있고 코드가 제공된 경우 업데이트
+            if ((dept as any).code !== deptCodeV) {
+              // 중복 체크
+              if (deptCodeMap.has(deptCodeV) && deptCodeMap.get(deptCodeV) !== dept.id) {
+                errors.push(`행 ${rowIndex}: Lv.1 코드 "${deptCodeV}"는 이미 사용 중입니다.`);
+                return;
+              }
+              (dept as any).code = deptCodeV;
+            }
+          }
+          deptCodeMap.set((dept as any).code || '', dept.id);
+
+          // 팀이 있는 경우
+          if (teamNameV) {
+            let team = dept.teams.find((t: Team) => t.name === teamNameV);
+            if (!team) {
+              const newTeamId = `team-${Date.now()}-${Math.random()}`;
+              team = {
+                id: newTeamId,
+                name: teamNameV,
+                groups: []
+              };
+              (team as any).code = teamCodeV || '';
+              dept.teams.push(team);
+              addedCount++;
+            } else if (teamCodeV) {
+              // 기존 팀이 있고 코드가 제공된 경우 업데이트
+              if ((team as any).code !== teamCodeV) {
+                // 중복 체크
+                if (!teamCodeMap.has(dept.id)) {
+                  teamCodeMap.set(dept.id, new Map());
+                }
+                const deptTeamMap = teamCodeMap.get(dept.id)!;
+                if (deptTeamMap.has(teamCodeV) && deptTeamMap.get(teamCodeV) !== team.id) {
+                  errors.push(`행 ${rowIndex}: Lv.2 코드 "${teamCodeV}"는 같은 실 내에서 이미 사용 중입니다.`);
+                  return;
+                }
+                (team as any).code = teamCodeV;
+              }
+            }
+            if (!teamCodeMap.has(dept.id)) {
+              teamCodeMap.set(dept.id, new Map());
+            }
+            teamCodeMap.get(dept.id)!.set((team as any).code || '', team.id);
+
+            // 그룹이 있는 경우
+            if (groupNameV) {
+              let group = team.groups.find((g: Group) => g.name === groupNameV);
+              if (!group) {
+                const newGroupId = `group-${Date.now()}-${Math.random()}`;
+                group = {
+                  id: newGroupId,
+                  name: groupNameV,
+                  members: []
+                };
+                (group as any).code = groupCodeV || '';
+                team.groups.push(group);
+                addedCount++;
+              } else if (groupCodeV) {
+                // 기존 그룹이 있고 코드가 제공된 경우 업데이트
+                if ((group as any).code !== groupCodeV) {
+                  // 중복 체크
+                  if (!groupCodeMap.has(dept.id)) {
+                    groupCodeMap.set(dept.id, new Map());
+                  }
+                  if (!groupCodeMap.get(dept.id)!.has(team.id)) {
+                    groupCodeMap.get(dept.id)!.set(team.id, new Map());
+                  }
+                  const teamGroupMap = groupCodeMap.get(dept.id)!.get(team.id)!;
+                  if (teamGroupMap.has(groupCodeV) && teamGroupMap.get(groupCodeV) !== group.id) {
+                    errors.push(`행 ${rowIndex}: Lv.3 코드 "${groupCodeV}"는 같은 팀 내에서 이미 사용 중입니다.`);
+                    return;
+                  }
+                  (group as any).code = groupCodeV;
+                }
+              }
+              if (!groupCodeMap.has(dept.id)) {
+                groupCodeMap.set(dept.id, new Map());
+              }
+              if (!groupCodeMap.get(dept.id)!.has(team.id)) {
+                groupCodeMap.get(dept.id)!.set(team.id, new Map());
+              }
+              groupCodeMap.get(dept.id)!.get(team.id)!.set((group as any).code || '', group.id);
+            }
+          }
+        });
+
+        // 에러가 있으면 에러 모달 표시
+        if (errors.length > 0) {
+          setUploadErrors(errors);
+          setIsErrorModalOpen(true);
+        }
+
+        if (addedCount > 0) {
+          onUpdateOrg(newOrg);
+          const successMsg = `${addedCount}개의 조직이 추가/업데이트되었습니다.`;
+          if (errors.length > 0) {
+            alert(successMsg + '\n\n일부 데이터에서 오류가 발생했습니다. 에러 상세 내용을 확인해주세요.');
+          } else {
+            alert(successMsg);
+          }
+        } else {
+          if (errors.length > 0) {
+            alert('일부 데이터에서 오류가 발생했습니다. 에러 상세 내용을 확인해주세요.');
+          } else {
+            alert('추가/업데이트된 조직이 없습니다.');
+          }
+        }
+
+        // 파일 입력 초기화
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      } catch (error: any) {
+        alert(`엑셀 파일 읽기 오류: ${error.message}`);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+
+    reader.onerror = () => {
+      alert('파일 읽기 오류가 발생했습니다.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+  };
+
   return (
     <div>
       <div className="admin-toolbar-row">
-        <p className="admin-description" style={{ margin: 0 }}>
-          조직 구조를 관리합니다. 조직을 삭제하면 연관된 Task도 함께 삭제됩니다.
-        </p>
+        <div>
+          <h3 className="panel-title" style={{ border: 'none', marginBottom: '5px', color: '#333' }}>조직 관리 (Lv.1 /Lv.2/Lv.3)</h3>
+          <p className="admin-description" style={{ margin: 0, padding: 0, background: 'none', border: 'none', color: '#666' }}>
+            실(Lv.1), 팀(Lv.2), 그룹(Lv.3)을 체계적으로 관리합니다. 조직을 삭제하면 연관된 Task도 함께 삭제됩니다.
+          </p>
+        </div>
         <div className="admin-toolbar-actions">
-          <button className="btn btn-primary btn-sm" onClick={() => handleStartAdd('department')}>+ 실 추가</button>
+          <button className="btn btn-secondary btn-sm" onClick={handleDownloadTemplate}>📥 내보내기</button>
+          <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+            📤 엑셀 업로드
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".xlsx,.xls"
+              onChange={handleExcelUpload}
+              style={{ display: 'none' }}
+            />
+          </label>
+          <span className="toolbar-separator"></span>
+          <button className="btn btn-primary btn-sm" onClick={() => onAdd('department', '새 실', {})}>+ 실 추가</button>
           <span className="toolbar-separator"></span>
           <button className="btn btn-success btn-sm" onClick={() => saveOrganizationToLocal(organization)}>💾 저장</button>
         </div>
       </div>
-      <ul className="category-tree">
-        {organization.departments.map(dept => (
-          <li key={dept.id} className="category-level-1">
-            <div className="category-item">
-              <span className="category-name">🏢 {dept.name}</span>
-              <div className="category-actions">
-                <button className="btn-action" onClick={() => handleStartAdd('team', { departmentId: dept.id })} title="팀 추가">➕</button>
-                <button className="btn-action" onClick={(e) => { e.stopPropagation(); onDelete('department', { departmentId: dept.id }); }} title="삭제">🗑️</button>
-              </div>
-            </div>
-            <ul>
-              {dept.teams.map(team => (
-                <li key={team.id} className="category-level-2">
-                  <div className="category-item">
-                    <span className="category-name">👥 {team.name}</span>
-                    <div className="category-actions">
-                      <button className="btn-action" onClick={() => handleStartAdd('group', { teamId: team.id })} title="그룹 추가">➕</button>
-                      <button className="btn-action" onClick={(e) => { e.stopPropagation(); onDelete('team', { departmentId: dept.id, teamId: team.id }); }} title="삭제">🗑️</button>
-                    </div>
-                  </div>
-                  <ul>
-                    {team.groups.map(group => (
-                      <li key={group.id} className="category-level-3">
-                        <div className="category-item">
-                          <span className="category-name">🎯 {group.name}</span>
-                          <div className="category-actions">
-                            <button className="btn-action" onClick={(e) => { e.stopPropagation(); onDelete('group', { departmentId: dept.id, teamId: team.id, groupId: group.id }); }} title="삭제">🗑️</button>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                    {renderAddForm('group', { teamId: team.id })}
-                  </ul>
-                </li>
-              ))}
-              {renderAddForm('team', { departmentId: dept.id })}
-            </ul>
-          </li>
-        ))}
-        {renderAddForm('department')}
-      </ul>
+
+      <div className="table-container" style={{ marginTop: '20px', backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflowY: 'auto', maxHeight: 'calc(100vh - 300px)', flex: 1 }}>
+        <table className="cat-table">
+          <thead>
+            <tr>
+              <th style={{width: '8%', color: '#333'}}>Lv.1 코드</th>
+              <th style={{width: '15%', color: '#333'}}>Lv.1 실</th>
+              <th style={{width: '8%', color: '#333'}}>Lv.2 코드</th>
+              <th style={{width: '15%', color: '#333'}}>Lv.2 팀</th>
+              <th style={{width: '8%', color: '#333'}}>Lv.3 코드</th>
+              <th style={{width: '20%', color: '#333'}}>Lv.3 그룹</th>
+              <th style={{width: '26%', color: '#333'}}>관리</th>
+            </tr>
+          </thead>
+          <tbody>
+            {organization.departments.length === 0 ? (
+              <tr><td colSpan={7} style={{textAlign:'center', padding:'30px', color:'#999'}}>등록된 조직이 없습니다.</td></tr>
+            ) : (
+              organization.departments.map((dept, deptIdx) => {
+                const deptSpan = getRowSpan(dept);
+                // 코드가 저장되어 있으면 사용, 없으면 인덱스 기반 자동 생성
+                const deptCode = (dept as any).code || String(deptIdx + 1).padStart(2, '0');
+                
+                // 실만 있고 하위가 없는 경우
+                if (dept.teams.length === 0) {
+                  return (
+                    <tr key={dept.id} className="cat-row">
+                      <td className="merged-cell code-cell"><input className="cat-input code-input" value={deptCode} onChange={(e) => handleChange(1, dept.id, 'code', e.target.value)} placeholder="코드" style={{textAlign: 'center'}} /></td>
+                      <td className="merged-cell">
+                        <input className="cat-input" value={dept.name} onChange={(e) => handleChange(1, dept.id, 'name', e.target.value)} placeholder="실명 입력" />
+                        <button className="text-btn add" onClick={() => onAdd('team', '새 팀', { departmentId: dept.id })}>+ 팀 추가</button>
+                      </td>
+                      <td colSpan={5} style={{background:'#f9f9f9', textAlign:'center', color:'#ccc'}}>(팀 없음)</td>
+                    </tr>
+                  );
+                }
+
+                // 팀 순회
+                return dept.teams.map((team, teamIdx) => {
+                  const teamSpan = getTeamRowSpan(team);
+                  // 코드가 저장되어 있으면 사용, 없으면 인덱스 기반 자동 생성
+                  const teamCode = (team as any).code || String(teamIdx + 1).padStart(2, '0');
+                  
+                  // 팀만 있고 하위가 없는 경우
+                  if (team.groups.length === 0) {
+                    return (
+                      <tr key={team.id} className="cat-row">
+                        {teamIdx === 0 && <td rowSpan={deptSpan} className="merged-cell code-cell"><input className="cat-input code-input" value={deptCode} onChange={(e) => handleChange(1, dept.id, 'code', e.target.value)} placeholder="코드" style={{textAlign: 'center'}} /></td>}
+                        {teamIdx === 0 && <td rowSpan={deptSpan} className="merged-cell">
+                          <input className="cat-input" value={dept.name} onChange={(e) => handleChange(1, dept.id, 'name', e.target.value)} placeholder="실명 입력" />
+                          <button className="text-btn add" onClick={() => onAdd('team', '새 팀', { departmentId: dept.id })}>+ 팀 추가</button>
+                        </td>}
+                        <td className="code-cell"><input className="cat-input code-input" value={teamCode} onChange={(e) => handleChange(2, team.id, 'code', e.target.value, dept.id)} placeholder="코드" style={{textAlign: 'center'}} /></td>
+                        <td>
+                          <input className="cat-input" value={team.name} onChange={(e) => handleChange(2, team.id, 'name', e.target.value, dept.id)} placeholder="팀명 입력" />
+                          <button className="text-btn add" onClick={() => onAdd('group', '새 그룹', { departmentId: dept.id, teamId: team.id })}>+ 그룹 추가</button>
+                        </td>
+                        <td colSpan={2} style={{background:'#f9f9f9', textAlign:'center', color:'#ccc'}}>(그룹 없음)</td>
+                        <td>
+                          <button className="btn-action delete" onClick={() => onDelete('team', { departmentId: dept.id, teamId: team.id })}>🗑️ 팀 삭제</button>
+                          {teamIdx === 0 && <div style={{marginTop:'5px', fontSize:'0.8rem'}}><button className="btn-action delete" onClick={() => onDelete('department', { departmentId: dept.id })} style={{color:'#007bff'}}>🚫 실 삭제</button></div>}
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  // 그룹 순회
+                  return team.groups.map((group, groupIdx) => {
+                    // 코드가 저장되어 있으면 사용, 없으면 인덱스 기반 자동 생성
+                    const groupCode = (group as any).code || String(groupIdx + 1).padStart(2, '0');
+                    return (
+                      <tr key={group.id} className="cat-row">
+                        {teamIdx === 0 && groupIdx === 0 && <td rowSpan={deptSpan} className="merged-cell code-cell"><input className="cat-input code-input" value={deptCode} onChange={(e) => handleChange(1, dept.id, 'code', e.target.value)} placeholder="코드" style={{textAlign: 'center'}} /></td>}
+                        {teamIdx === 0 && groupIdx === 0 && <td rowSpan={deptSpan} className="merged-cell">
+                          <input className="cat-input" value={dept.name} onChange={(e) => handleChange(1, dept.id, 'name', e.target.value)} placeholder="실명 입력" />
+                          <button className="text-btn add" onClick={() => onAdd('team', '새 팀', { departmentId: dept.id })}>+ 팀 추가</button>
+                        </td>}
+                        {groupIdx === 0 && <td rowSpan={teamSpan} className="code-cell"><input className="cat-input code-input" value={teamCode} onChange={(e) => handleChange(2, team.id, 'code', e.target.value, dept.id)} placeholder="코드" style={{textAlign: 'center'}} /></td>}
+                        {groupIdx === 0 && <td rowSpan={teamSpan} style={{verticalAlign:'top'}}>
+                          <input className="cat-input" value={team.name} onChange={(e) => handleChange(2, team.id, 'name', e.target.value, dept.id)} placeholder="팀명 입력" />
+                          <button className="text-btn add" onClick={() => onAdd('group', '새 그룹', { departmentId: dept.id, teamId: team.id })}>+ 그룹 추가</button>
+                        </td>}
+                        <td className="code-cell"><input className="cat-input code-input" value={groupCode} onChange={(e) => handleChange(3, group.id, 'code', e.target.value, dept.id, team.id)} placeholder="코드" style={{textAlign: 'center'}} /></td>
+                        <td><input className="cat-input" value={group.name} onChange={(e) => handleChange(3, group.id, 'name', e.target.value, dept.id, team.id)} placeholder="그룹명 입력" /></td>
+                        <td>
+                          <button className="btn-action delete" onClick={() => onDelete('group', { departmentId: dept.id, teamId: team.id, groupId: group.id })}>🗑️ 삭제</button>
+                          {groupIdx === 0 && <div style={{display:'inline-block', marginLeft:'10px'}}><button className="btn-action delete" onClick={() => onDelete('team', { departmentId: dept.id, teamId: team.id })} style={{color:'#fd7e14', fontSize:'0.8rem'}}>🚫 팀 삭제</button></div>}
+                        </td>
+                      </tr>
+                    );
+                  });
+                });
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+      <ErrorModal
+        isOpen={isErrorModalOpen}
+        title="엑셀 업로드 오류"
+        errors={uploadErrors}
+        onClose={() => setIsErrorModalOpen(false)}
+      />
     </div>
   );
 };
@@ -1512,38 +2038,128 @@ const UserManagementTab = ({ organization, onUpdateOrg }: { organization: Organi
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
 
   const availableTeams = useMemo(() => {
-    if (!newUser.deptId) return [];
-    const dept = organization.departments.find(d => d.id === newUser.deptId);
+    const deptId = editingMember?.deptId || newUser.deptId;
+    if (!deptId) return [];
+    const dept = organization.departments.find(d => d.id === deptId);
     return dept ? dept.teams : [];
-  }, [organization, newUser.deptId]);
+  }, [organization, newUser.deptId, editingMember?.deptId]);
 
   const availableGroups = useMemo(() => {
-    if (!newUser.teamId) return [];
+    const teamId = editingMember?.teamId || newUser.teamId;
+    if (!teamId) return [];
     for (const d of organization.departments) {
-      const team = d.teams.find(t => t.id === newUser.teamId);
+      const team = d.teams.find(t => t.id === teamId);
       if (team) return team.groups;
     }
     return [];
-  }, [organization, newUser.teamId]);
+  }, [organization, newUser.teamId, editingMember?.teamId]);
 
   const handleSaveMember = () => {
     if (!editingMember) return;
+    
+    const isAdmin = editingMember.role === 'admin';
+    const isDeptHead = editingMember.role === 'dept_head';
+    const isTeamLeader = editingMember.role === 'team_leader';
+    
+    // 소속 검증
+    if (!isAdmin && !editingMember.deptId) {
+      alert('실(Department)은 필수 선택 항목입니다.');
+      return;
+    }
+    if (!isAdmin && !isDeptHead && !editingMember.teamId) {
+      alert('팀(Team)은 필수 선택 항목입니다.');
+      return;
+    }
+    if (!isAdmin && !isDeptHead && !isTeamLeader && !editingMember.groupId) {
+      alert('그룹(Group)은 필수 선택 항목입니다.');
+      return;
+    }
+    
     const newOrg = JSON.parse(JSON.stringify(organization));
+    
+    // 기존 위치에서 사용자 찾기 및 제거
+    let oldMember: Member | null = null;
+    let oldGroup: any = null;
     outer:
     for (const d of newOrg.departments) {
       for (const t of d.teams) {
         for (const g of t.groups) {
           const idx = g.members.findIndex((m: Member) => m.id === editingMember.id);
           if (idx !== -1) {
-            g.members[idx] = { ...g.members[idx], name: editingMember.name, position: editingMember.position, loginId: editingMember.loginId, password: editingMember.password, role: editingMember.role };
+            oldMember = g.members[idx];
+            oldGroup = g;
+            g.members.splice(idx, 1);
             break outer;
           }
         }
       }
     }
-    onUpdateOrg(newOrg);
-    setEditingMember(null);
-    alert('사용자 정보가 수정되었습니다.');
+    
+    if (!oldMember) {
+      alert('사용자를 찾을 수 없습니다.');
+      return;
+    }
+    
+    // 새 소속 결정
+    let targetGroupId = editingMember.groupId;
+    if (isAdmin) {
+      const dept = newOrg.departments?.[0];
+      const team = dept?.teams?.[0];
+      const group = team?.groups?.[0];
+      if (!group?.id) {
+        alert('조직 데이터(실/팀/그룹)가 비어 있어 관리자를 저장할 수 없습니다.');
+        return;
+      }
+      targetGroupId = group.id;
+    } else if (isDeptHead) {
+      const dept = newOrg.departments.find((d: any) => d.id === editingMember.deptId);
+      const team = dept?.teams?.[0];
+      const group = team?.groups?.[0];
+      if (!group?.id) {
+        alert('선택한 실에 팀/그룹이 없어 실장을 저장할 수 없습니다.');
+        return;
+      }
+      targetGroupId = group.id;
+    } else if (isTeamLeader) {
+      const dept = newOrg.departments.find((d: any) => d.id === editingMember.deptId);
+      const team = dept?.teams?.find((t: any) => t.id === editingMember.teamId);
+      const group = team?.groups?.[0];
+      if (!group?.id) {
+        alert('선택한 팀에 그룹이 없어 팀장을 저장할 수 없습니다.');
+        return;
+      }
+      targetGroupId = group.id;
+    }
+    
+    // 새 위치에 사용자 추가
+    let added = false;
+    outerLoop:
+    for (const d of newOrg.departments) {
+      for (const t of d.teams) {
+        for (const g of t.groups) {
+          if (g.id === targetGroupId) {
+            g.members.push({
+              ...oldMember,
+              name: editingMember.name,
+              position: editingMember.position,
+              loginId: editingMember.loginId,
+              password: editingMember.password,
+              role: editingMember.role as UserRole
+            });
+            added = true;
+            break outerLoop;
+          }
+        }
+      }
+    }
+    
+    if (added) {
+      onUpdateOrg(newOrg);
+      setEditingMember(null);
+      alert('사용자 정보가 수정되었습니다.');
+    } else {
+      alert('소속 그룹을 찾을 수 없습니다.');
+    }
   };
   
   const handleAddMember = () => {
@@ -1904,7 +2520,7 @@ const UserManagementTab = ({ organization, onUpdateOrg }: { organization: Organi
                           : '팀원'}
                 </span>
               </td>
-              <td style={{padding: '8px', textAlign: 'center'}}><button className="btn-sm btn-secondary" onClick={() => setEditingMember(m)}>수정</button></td>
+              <td style={{padding: '8px', textAlign: 'center'}}><button className="btn-sm btn-secondary" onClick={() => setEditingMember({...m, deptId: m.deptId, teamId: m.teamId, groupId: m.groupId})}>수정</button></td>
             </tr>
           ))}
         </tbody>
@@ -1917,8 +2533,39 @@ const UserManagementTab = ({ organization, onUpdateOrg }: { organization: Organi
             <div className="form-row"><div className="form-group"><label className="form-label">로그인 ID</label><input className="form-input" value={editingMember.loginId} onChange={e => setEditingMember({...editingMember, loginId: e.target.value})} /></div><div className="form-group"><label className="form-label">비밀번호</label><input className="form-input" value={editingMember.password} onChange={e => setEditingMember({...editingMember, password: e.target.value})} /></div></div>
             <div className="form-row">
               <div className="form-group"><label className="form-label">직책</label><input className="form-input" value={editingMember.position} onChange={e => setEditingMember({...editingMember, position: e.target.value})} /></div>
-              <div className="form-group"><label className="form-label">시스템 권한</label><select className="form-input" value={editingMember.role} onChange={e => setEditingMember({...editingMember, role: e.target.value})}><option value="member">팀원</option><option value="group_leader">그룹장</option><option value="team_leader">팀장</option><option value="dept_head">실장</option><option value="admin">관리자</option></select></div>
+              <div className="form-group"><label className="form-label">시스템 권한</label><select className="form-input" value={editingMember.role} onChange={e => {
+                const newRole = e.target.value;
+                setEditingMember({...editingMember, role: newRole, teamId: newRole === 'admin' || newRole === 'dept_head' ? '' : editingMember.teamId, groupId: newRole === 'admin' || newRole === 'dept_head' || newRole === 'team_leader' ? '' : editingMember.groupId});
+              }}><option value="member">팀원</option><option value="group_leader">그룹장</option><option value="team_leader">팀장</option><option value="dept_head">실장</option><option value="admin">관리자</option></select></div>
             </div>
+            {/* 소속 선택 필드 */}
+            {editingMember.role !== 'admin' && (
+              <div className="form-group">
+                <label className="form-label">실 *</label>
+                <select className="form-input" value={editingMember.deptId || ''} onChange={e => setEditingMember({...editingMember, deptId: e.target.value, teamId: '', groupId: ''})}>
+                  <option value="">선택</option>
+                  {organization.departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+            )}
+            {editingMember.role !== 'admin' && editingMember.role !== 'dept_head' && editingMember.deptId && (
+              <div className="form-group">
+                <label className="form-label">팀 *</label>
+                <select className="form-input" value={editingMember.teamId || ''} onChange={e => setEditingMember({...editingMember, teamId: e.target.value, groupId: ''})}>
+                  <option value="">선택</option>
+                  {availableTeams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+            )}
+            {editingMember.role !== 'admin' && editingMember.role !== 'dept_head' && editingMember.role !== 'team_leader' && editingMember.teamId && (
+              <div className="form-group">
+                <label className="form-label">그룹 *</label>
+                <select className="form-input" value={editingMember.groupId || ''} onChange={e => setEditingMember({...editingMember, groupId: e.target.value})}>
+                  <option value="">선택</option>
+                  {availableGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setEditingMember(null)}>취소</button><button className="btn btn-primary" onClick={handleSaveMember}>저장</button></div>
           </div>
         </div>
@@ -2183,7 +2830,9 @@ const ErrorModal = ({
   const safeStatusLines = statusLines ?? [];
   const safeErrorReasons = errorReasons ?? [];
   const hasAnyContent = safeErrors.length > 0 || safeStatusLines.length > 0 || safeErrorReasons.length > 0;
-  if (!isOpen || !hasAnyContent) return null;
+  // ✅ 통합 업로드 결과는 항상 표시 (내용이 없어도 모달은 열림)
+  const isIntegratedUpload = title === '통합 업로드 결과';
+  if (!isOpen || (!isIntegratedUpload && !hasAnyContent)) return null;
 
   const normalizeLine = (line: string) => String(line ?? '').replace(/^\s*-\s*/, '').trim();
   const PAGE_SIZE = 50;
@@ -2236,8 +2885,8 @@ const ErrorModal = ({
             </div>
           )}
 
-          {/* 오류 사유 */}
-          {(safeErrorReasons.length > 0 || safeErrors.length > 0) && (
+          {/* 오류 사유 - 통합 업로드 결과일 때는 항상 제목 표시 */}
+          {isIntegratedUpload ? (
             <div
               style={{
                 backgroundColor: '#f8d7da',
@@ -2250,25 +2899,67 @@ const ErrorModal = ({
               <p style={{ margin: 0, color: '#721c24', fontWeight: 'bold', marginBottom: '8px' }}>
                 상세 오류 내역
               </p>
-              <ul style={{ margin: 0, paddingLeft: '20px', color: '#721c24' }}>
-                {[...safeErrorReasons, ...safeErrors].slice(0, visibleErrorCount).map((err, idx) => (
-                  <li key={idx} style={{ marginBottom: '4px' }}>
-                    {err}
-                  </li>
-                ))}
-              </ul>
-              {([...safeErrorReasons, ...safeErrors].length > visibleErrorCount) && (
-                <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'center' }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => setVisibleErrorCount((n) => n + PAGE_SIZE)}
-                  >
-                    더보기 (+{PAGE_SIZE})
-                  </button>
-                </div>
+              {(safeErrorReasons.length > 0 || safeErrors.length > 0) ? (
+                <>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: '#721c24' }}>
+                    {[...safeErrorReasons, ...safeErrors].slice(0, visibleErrorCount).map((err, idx) => (
+                      <li key={idx} style={{ marginBottom: '4px' }}>
+                        {err}
+                      </li>
+                    ))}
+                  </ul>
+                  {([...safeErrorReasons, ...safeErrors].length > visibleErrorCount) && (
+                    <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'center' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setVisibleErrorCount((n) => n + PAGE_SIZE)}
+                      >
+                        더보기 (+{PAGE_SIZE})
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p style={{ margin: 0, color: '#721c24', paddingLeft: '20px', fontStyle: 'italic' }}>
+                  오류 내역이 없습니다.
+                </p>
               )}
             </div>
+          ) : (
+            (safeErrorReasons.length > 0 || safeErrors.length > 0) && (
+              <div
+                style={{
+                  backgroundColor: '#f8d7da',
+                  border: '1px solid #f5c6cb',
+                  borderRadius: '4px',
+                  padding: '12px',
+                  marginBottom: '10px'
+                }}
+              >
+                <p style={{ margin: 0, color: '#721c24', fontWeight: 'bold', marginBottom: '8px' }}>
+                  상세 오류 내역
+                </p>
+                <ul style={{ margin: 0, paddingLeft: '20px', color: '#721c24' }}>
+                  {[...safeErrorReasons, ...safeErrors].slice(0, visibleErrorCount).map((err, idx) => (
+                    <li key={idx} style={{ marginBottom: '4px' }}>
+                      {err}
+                    </li>
+                  ))}
+                </ul>
+                {([...safeErrorReasons, ...safeErrors].length > visibleErrorCount) && (
+                  <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'center' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setVisibleErrorCount((n) => n + PAGE_SIZE)}
+                    >
+                      더보기 (+{PAGE_SIZE})
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
           )}
         </div>
 
@@ -2379,8 +3070,25 @@ const OBSManagementTab = ({
     // Lv.1 코드
     const lv1Code = obsCodeMapping.lv1[lv1 as keyof typeof obsCodeMapping.lv1] || '';
     
-    // Lv.2 코드 (팀 이름에서 팀 코드 매핑)
-    const lv2Code = lv2 ? ((orgCodeMapping.teams as any)[lv2] || '') : '';
+    // Lv.2 코드: 조직 관리 화면에서 설정한 팀 코드 사용 (일치 보장)
+    let lv2Code = '';
+    if (lv2) {
+      // 조직 구조에서 해당 팀을 찾아 조직 관리에서 설정한 코드 사용
+      let found = false;
+      for (const dept of organization.departments) {
+        for (let teamIdx = 0; teamIdx < dept.teams.length; teamIdx++) {
+          const team = dept.teams[teamIdx];
+          if (team.name === lv2) {
+            // 조직 관리에서 설정한 코드가 있으면 우선 사용, 없으면 인덱스 기반 생성
+            lv2Code = (team as any).code || String(teamIdx + 1).padStart(2, '0');
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+      // 찾지 못한 경우에도 기존 매핑은 사용하지 않고 빈 문자열 유지 (조직 관리 코드만 사용)
+    }
     
     // Lv.3 코드 (업무 구분 Lv.3에서 찾기 - categoryMaster에서 찾아야 함)
     const preferred = getPreferredLv3CodeFromTaskCatalog(lv2, lv3);
@@ -2505,11 +3213,32 @@ const OBSManagementTab = ({
       setRows(rows.filter(row => row.id !== id));
   };
 
+  // 조직 관리에서 설정한 팀 코드 목록 추출 (유효성 검사용)
+  const validTeamCodes = useMemo(() => {
+    const codes = new Set<string>();
+    organization.departments.forEach(dept => {
+      dept.teams.forEach(team => {
+        const code = (team as any).code || String(dept.teams.indexOf(team) + 1).padStart(2, '0');
+        codes.add(code);
+      });
+    });
+    return codes;
+  }, [organization]);
+
   const handleInputChange = (id: number, field: keyof FlatTableRow, value: string) => {
       setRows(rows.map(row => {
           if (row.id !== id) return row;
           
           const updated = { ...row, [field]: value };
+          
+          // Lv.2 코드 직접 입력 시 조직 관리에서 설정한 팀 코드와 일치하는지 검사
+          if (field === 'lv2Code' && value.trim() !== '') {
+            const trimmedValue = value.trim();
+            if (!validTeamCodes.has(trimmedValue)) {
+              alert(`Lv.2 코드 "${trimmedValue}"는 조직 관리에서 설정한 팀 코드와 일치하지 않습니다.\n등록된 팀 코드: ${Array.from(validTeamCodes).sort().join(', ')}`);
+              return row; // 변경하지 않고 원래 값 유지
+            }
+          }
           
           // Lv.1, Lv.2, Lv.3 변경 시 코드 자동 업데이트
           if (field === 'lv1' || field === 'lv2' || field === 'lv3') {
@@ -2669,6 +3398,17 @@ const OBSManagementTab = ({
             lv1 = row[0]?.toString().trim() || '';
             lv2 = row[1]?.toString().trim() || '';
             lv3 = row[2]?.toString().trim() || '';
+          }
+
+          // ✅ Lv.3(업무 구분3) 유효성 검증: 업무_구분(Lv.3)에 없으면 오류
+          const lv3NameV = (lv3 || '').toString().trim();
+          if (lv3NameV) {
+            const existsInCategory = lv3Entries.some(e => e.name === lv3NameV);
+            if (!existsInCategory) {
+              errors.push(`행 ${rowIndex}: Lv.3 "${lv3NameV}"가 업무_구분(Lv.3)에 존재하지 않습니다.`);
+              rowIndex++;
+              return;
+            }
           }
 
           // Lv.1이 유효한 옵션인지 확인
@@ -3745,7 +4485,7 @@ const AdminPanel = ({
       </div>
 
       <div className="admin-content" style={{ backgroundColor: '#f4f6f9', padding: '20px' }}>
-        {currentTab === 'org' && <OrgManagementTab organization={organization} onAdd={handleAddOrg} onDelete={requestDelete} />}
+        {currentTab === 'org' && <OrgManagementTab organization={organization} onAdd={handleAddOrg} onDelete={requestDelete} onUpdateOrg={(newOrg) => onUpdateData({...data, organization: newOrg})} />}
         
         {currentTab === 'user' && <UserManagementTab organization={organization} onUpdateOrg={(newOrg) => onUpdateData({...data, organization: newOrg})} />}
         
@@ -4395,7 +5135,7 @@ const RevisionModal = ({ isOpen, onClose, task }: { isOpen: boolean; onClose: ()
   );
 };
 
-const IssueModal = ({ isOpen, onClose, task, onUpdate, user }: { isOpen: boolean; onClose: () => void; task: Task | null; onUpdate: (task: Task) => void, user: UserContextType }) => {
+const IssueModal = ({ isOpen, onClose, task, onUpdate, user, organization }: { isOpen: boolean; onClose: () => void; task: Task | null; onUpdate: (task: Task) => void, user: UserContextType; organization: Organization }) => {
   const getTodayStr = () => { const today = new Date(); const kstOffset = 9 * 60 * 60 * 1000; return new Date(today.getTime() + kstOffset).toISOString().split('T')[0]; };
   const [newIssueText, setNewIssueText] = useState('');
   const [newIssueDate, setNewIssueDate] = useState(getTodayStr());
@@ -4455,7 +5195,7 @@ const IssueModal = ({ isOpen, onClose, task, onUpdate, user }: { isOpen: boolean
 
   if (!isOpen || !task) return null;
 
-  const canReview = user ? canReviewTask(user, task) : false;
+  const canReview = user ? canReviewTask(user, task, organization) : false;
   const canDeleteIssue = user ? user.role !== 'member' : false;
 
     const handleAddIssue = () => {
@@ -5141,8 +5881,9 @@ const App = () => {
       .group-card-body { display: flex; gap: 30px; align-items: flex-start; width: 100%; }
       .group-stat-section { display: flex; flex-direction: column; }
       .group-stat-section.status { flex: 0 0 220px; align-items: center; }
-      .group-stat-section.trend { flex: 1; min-width: 0; }
-      .group-stat-section.mbo { flex: 0 0 250px; }
+      .group-stat-section.trend { flex: 0.9; min-width: 0; }
+      /* ✅ MBO 컨테이너 넓이 10% 증가 (250px -> 275px) */
+      .group-stat-section.mbo { flex: 0 0 275px; }
 
       .donut-center-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
       .donut-total { font-size: 2rem; font-weight: bold; color: #333; display: block; line-height: 1; }
@@ -5253,7 +5994,8 @@ const App = () => {
       .division-sidebar-panel { width: 300px; flex-shrink: 0; display: flex; flex-direction: column; gap: 20px; }
       .division-panel-card { background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); padding: 20px; display: flex; flex-direction: column; }
       .panel-title { font-size: 1.1rem; font-weight: bold; margin-bottom: 15px; color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px; }
-      .division-main-grid { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; overflow-y: auto; padding-bottom: 20px; }
+      /* ✅ 실 대시보드 팀 카드: 3열 고정 배치 */
+      .division-main-grid { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; overflow-y: auto; padding-bottom: 20px; }
       .overall-donut-container { position: relative; height: 220px; display: flex; justify-content: center; margin-bottom: 20px; }
       .overall-center-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
       .overall-total { font-size: 2.5rem; font-weight: bold; color: #333; }
@@ -5368,7 +6110,8 @@ const App = () => {
 
       .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
       .task-table { background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); padding: 20px; overflow: hidden; }
-      .task-table table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      /* Task 상세 현황: 헤더 텍스트가 잘리지 않도록 충분한 최소 너비 확보 */
+      .task-table table { width: 100%; min-width: 1600px; border-collapse: collapse; margin-top: 10px; }
       .task-table th, .task-table td { padding: 12px 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.9rem; }
       .task-table th { background-color: #f8f9fa; color: #555; font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap; position: relative; }
       .task-table th:hover { background-color: #e9ecef; }
@@ -5465,14 +6208,41 @@ const App = () => {
 
       .sticky-table-layout { display: flex; flex-direction: column; height: calc(100vh - 120px); overflow: hidden; }
       .sticky-control-bar { position: sticky; top: 0; background: white; z-index: 10; padding-bottom: 0; border-bottom: 1px solid #eee; }
-      .table-responsive { flex: 1; overflow: auto; }
+      /* ✅ TaskListView 스크롤 자동 조정 금지 */
+      .table-responsive { 
+        flex: 1; 
+        overflow: auto; 
+        scroll-behavior: auto !important; 
+        overscroll-behavior: contain;
+      }
+      .table-responsive * { 
+        scroll-behavior: auto !important; 
+        overscroll-behavior: contain;
+      }
       /* TaskListView: 헤더 가운데 정렬 + 스크롤 시 상단 고정 */
       .sticky-thead th { position: sticky; top: 0; z-index: 20; box-shadow: 0 1px 2px rgba(0,0,0,0.1); background: #f8f9fa; text-align: center; vertical-align: middle; }
 
       .task-search { display: flex; align-items: center; gap: 6px; background: #f1f3f5; border: 1px solid #e9ecef; border-radius: 8px; padding: 4px 8px; height: 32px; }
-      .task-search-input { border: none; background: transparent; outline: none; font-size: 0.85rem; min-width: 220px; }
+      /* ✅ 검색 영역 폭 추가 20% 축소(165px -> 132px) */
+      .task-search-input { border: none; background: transparent; outline: none; font-size: 0.85rem; min-width: 132px; width: 132px; }
       .task-search-clear { border: none; background: transparent; cursor: pointer; color: #868e96; font-size: 1.05rem; line-height: 1; padding: 0 4px; }
       .task-search-clear:hover { color: #495057; }
+
+      /* TaskListView 상단 컨트롤: 어떤 폭에서도 줄바꿈 금지(세로 이동 방지) */
+      .table-controls { flex-wrap: nowrap !important; overflow-x: auto; max-width: 100%; }
+      .table-controls > * { flex-shrink: 0; }
+      /* 액션 버튼 영역: 기본 폭 10% 축소(약 400px -> 360px) */
+      .action-buttons-container { display: flex; gap: 6px; flex-wrap: nowrap; flex-shrink: 0; flex: 0 1 360px; max-width: 360px; }
+      .btn.action-btn { padding: 6px 10px; height: 32px; }
+      .btn.action-btn .btn-icon { display: inline-flex; }
+      @media (max-width: 1200px) {
+        .btn.action-btn .btn-text { display: none; }
+        .btn.action-btn { padding: 6px 8px; min-width: 32px; }
+      }
+      /* 더 좁은 화면에서는 영역 자체를 25%까지 축소 */
+      @media (max-width: 1400px) {
+        .action-buttons-container { flex-basis: 25%; max-width: 25%; }
+      }
       .task-search-apply { height: 32px; padding: 0 12px; border-radius: 8px; }
       
       @media (max-width: 768px) {
@@ -5532,13 +6302,13 @@ const App = () => {
     const ensureHardcodedUsers = (org: Organization): Organization => {
       const newOrg = JSON.parse(JSON.stringify(org)) as Organization;
 
-      // 1) 실장 소병식 (CEO/1234) 강제 존재
-      const hasCEO = newOrg.departments.some(d =>
+      // 1) 실장 소병식 (cto/1234) 강제 존재
+      const hasCTO = newOrg.departments.some(d =>
         d.teams.some(t =>
-          t.groups.some(g => g.members.some(m => (m.loginId || '').toUpperCase() === 'CEO'))
+          t.groups.some(g => g.members.some(m => (m.loginId || '').toUpperCase() === 'CTO'))
         )
       );
-      if (!hasCEO) {
+      if (!hasCTO) {
         const dept = newOrg.departments?.[0];
         const team = dept?.teams?.[0];
         const group = team?.groups?.[0];
@@ -5547,7 +6317,7 @@ const App = () => {
             id: 'ceo01',
             name: '소병식',
             position: '실장',
-            loginId: 'CEO',
+            loginId: 'cto',
             password: '1234',
             role: 'dept_head'
           });
@@ -5642,7 +6412,8 @@ const App = () => {
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   // ✅ Task 목록 테이블 컬럼 넓이: 정렬/리렌더 시 초기화 방지 (App 레벨로 승격)
   // (비활성화 컬럼 + Task Code 컬럼 분리로 1칸 추가)
-  const [taskTableColumnWidths, setTaskTableColumnWidths] = useState<number[]>([4, 6, 10, 9, 9, 12, 9, 10, 10, 7, 7, 4, 3, 7]);
+  // ✅ 헤더 텍스트가 잘리지 않도록 기본 폭 재조정 (합계 100)
+  const [taskTableColumnWidths, setTaskTableColumnWidths] = useState<number[]>([3, 5, 9, 9, 8, 15, 7, 7, 7, 5, 6, 5, 4, 10]);
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [isTaskModalOpen, setTaskModalOpen] = useState(false);
   const [isUploadModalOpen, setUploadModalOpen] = useState(false);
@@ -5731,7 +6502,7 @@ const App = () => {
     const catMaster = data.organization.departments[0]?.teams[0]?.categoryMaster;
     if (!catMaster || Object.keys(catMaster).length === 0) reasons.push('업무 구분이 등록되지 않았습니다. (업무_구분)');
     const obsMaster = data.organization.departments[0]?.teams[0]?.obsMaster;
-    if (!obsMaster || Object.keys(obsMaster).length === 0) reasons.push('OBS 관리가 등록되지 않았습니다. (OBS_Master_Data)');
+    if (!obsMaster || Object.keys(obsMaster).length === 0) reasons.push('OBS 관리가 등록되지 않았습니다. (OBS_관리)');
     if (!data.tasks || data.tasks.length === 0) reasons.push('Task 등록이 되어있지 않습니다. (Task 관리)');
     return reasons;
   }, [data.organization, data.tasks]);
@@ -5892,8 +6663,11 @@ const App = () => {
       addNotification('수정 권한이 없습니다.', 'error');
       return;
     }
-    setSelectedTaskForEdit(task);
-    setEditModalOpen(true);
+    // 상태 업데이트를 지연시켜 스크롤 복원이 먼저 실행되도록 함
+    requestAnimationFrame(() => {
+      setSelectedTaskForEdit(task);
+      setEditModalOpen(true);
+    });
   };
   const handleOpenDetailModal = (task: Task) => { setSelectedTaskForDetail(task); setDetailModalOpen(true); };
   const handleUpdateData = (newData: SampleData) => { setData(newData); };
@@ -5933,6 +6707,14 @@ const App = () => {
       [''],
       ['[업무_구분 / OBS_Master_Data]'],
       ['- 신규 등록시 코드는 비워둡니다.'],
+      [''],
+      ['[조직_관리]'],
+      ['- "*" 표시는 필수 입력입니다.'],
+      ['- 코드는 자동 생성되며, 수동 입력도 가능합니다.'],
+      ['- Lv.1 코드는 전체 조직에서 고유해야 합니다.'],
+      ['- Lv.2 코드는 같은 Lv.1 내에서 고유해야 합니다.'],
+      ['- Lv.3 코드는 같은 Lv.2 내에서 고유해야 합니다.'],
+      ['- 빈 행은 무시됩니다.'],
       [''],
       ['[사용자_관리]'],
       ['- "*" 표시는 필수 입력입니다.'],
@@ -6120,8 +6902,8 @@ const App = () => {
     Object.keys(activeCategoryData).forEach(cat1Name => {
       const cat1Code = categoryCodeMapping.category1[cat1Name] || '';
       const cat2Obj = activeCategoryData[cat1Name];
-      Object.keys(cat2Obj).forEach(cat2Name => {
-        const cat2Code = '';
+      Object.keys(cat2Obj).forEach((cat2Name, idx2) => {
+        const cat2Code = String(idx2 + 1).padStart(2, '0');
         const cat3List = cat2Obj[cat2Name] || [];
         if (cat3List.length > 0) {
           cat3List.forEach((cat3Name: string, idx3: number) => {
@@ -6152,10 +6934,26 @@ const App = () => {
     const obsWsData = [['Lv.1 코드', '*Lv1 명칭', 'Lv.2 코드', '*Lv2 명칭', 'Lv.3 코드', '*Lv3 명칭']];
     const activeOBSData = data.organization.departments[0]?.teams[0]?.obsMaster || {};
     
-    // OBS 코드 생성 헬퍼 함수 (로컬)
+    // OBS 코드 생성 헬퍼 함수 (로컬) - 조직 관리 화면 코드 기반
     const generateOBSCodeForTemplate = (lv1: string, lv2: string, lv3: string) => {
       const lv1Code = obsCodeMapping.lv1[lv1 as keyof typeof obsCodeMapping.lv1] || '';
-      const lv2Code = lv2 ? ((orgCodeMapping.teams as any)[lv2] || '') : '';
+      // Lv.2 코드: 조직 관리 화면에서 설정한 팀 코드 사용
+      let lv2Code = '';
+      if (lv2) {
+        let found = false;
+        for (const dept of data.organization.departments) {
+          for (let teamIdx = 0; teamIdx < dept.teams.length; teamIdx++) {
+            const team = dept.teams[teamIdx];
+            if (team.name === lv2) {
+              // 조직 관리에서 설정한 코드 우선 사용, 없으면 인덱스 기반 생성
+              lv2Code = (team as any).code || String(teamIdx + 1).padStart(2, '0');
+              found = true;
+              break;
+            }
+          }
+          if (found) break;
+        }
+      }
       let lv3Code = '';
       if (lv3) {
         const categoryMaster = data.organization.departments[0]?.teams[0]?.categoryMaster || categoryMasterData;
@@ -6207,11 +7005,41 @@ const App = () => {
       { wch: 10, hidden: true }, // Lv.3 코드
       { wch: 35 }                // Lv3 명칭
     ];
-    // ✅ 표준양식 다운로드: "OBS Master Data" 시트는 제거하고,
-    //    OBS 템플릿 시트명은 "OBS_Master_Data"로 통일
+    // ✅ 표준양식 다운로드: OBS_관리 시트는 제거하고, "OBS_Master_Data" 시트명으로만 제공
     XLSX.utils.book_append_sheet(wb, obsWs, "OBS_Master_Data");
 
-    // 4. 사용자 관리 템플릿 시트
+    // 4. 조직 관리 템플릿 시트
+    const orgWsData = [['Lv.1 코드', '*Lv.1 실', 'Lv.2 코드', '*Lv.2 팀', 'Lv.3 코드', '*Lv.3 그룹']];
+    // 현재 조직 데이터를 평탄화하여 엑셀 데이터로 변환
+    data.organization.departments.forEach((dept, deptIdx) => {
+      const deptCode = (dept as any).code || String(deptIdx + 1).padStart(2, '0');
+      
+      if (dept.teams.length === 0) {
+        // 실만 있고 팀이 없는 경우
+        orgWsData.push([deptCode, dept.name, '', '', '', '']);
+      } else {
+        dept.teams.forEach((team, teamIdx) => {
+          const teamCode = (team as any).code || String(teamIdx + 1).padStart(2, '0');
+          
+          if (team.groups.length === 0) {
+            // 팀만 있고 그룹이 없는 경우
+            orgWsData.push([deptCode, dept.name, teamCode, team.name, '', '']);
+          } else {
+            // 그룹이 있는 경우
+            team.groups.forEach((group, groupIdx) => {
+              const groupCode = (group as any).code || String(groupIdx + 1).padStart(2, '0');
+              orgWsData.push([deptCode, dept.name, teamCode, team.name, groupCode, group.name]);
+            });
+          }
+        });
+      }
+    });
+    const orgWs = XLSX.utils.aoa_to_sheet(orgWsData);
+    setTextFormatForColumns(orgWs, [1, 3, 5], { ensureRows: 1000 });
+    orgWs['!cols'] = [{ wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, orgWs, "조직_관리");
+
+    // 5. 사용자 관리 템플릿 시트
     const userWsData = [['*이름', '*ID', '*비밀번호', '*실', '*팀', '*그룹', '직책', '*권한']];
     const allMembers = data.organization.departments.flatMap(d => 
       d.teams.flatMap(t => 
@@ -6371,38 +7199,53 @@ const App = () => {
     const reader = new FileReader();
     reader.readAsArrayBuffer(file);
 
+    reader.onerror = () => {
+      alert('파일을 읽는 중 오류가 발생했습니다.');
+      if (e.target) e.target.value = '';
+    };
+
     reader.onload = (event) => {
-      const data = event.target?.result;
-      if (!data) return;
+      const fileData = event.target?.result;
+      if (!fileData) {
+        alert('파일 데이터를 읽을 수 없습니다.');
+        if (e.target) e.target.value = '';
+        return;
+      }
 
       try {
         if (typeof XLSX === 'undefined') {
           alert('XLSX 라이브러리가 로드되지 않았습니다.');
+          if (e.target) e.target.value = '';
           return;
         }
 
-        const workbook = XLSX.read(data, { type: 'array' });
+        const workbook = XLSX.read(fileData, { type: 'array' });
         const sheetNames = workbook.SheetNames;
         // ✅ 단일 시트만 있어도 존재하는 시트만 처리
-        const OBS_CANONICAL_SHEET = 'OBS_Master_Data';
-        const OBS_SHEET_ALIASES = ['OBS_관리', 'OBS_Master_Data'] as const;
-        const requiredSheets = ['Task 관리', '업무_구분', 'OBS_Master_Data', '사용자_관리'] as const;
+        const requiredSheets = ['Task 관리', '업무_구분', 'OBS_관리', '사용자_관리', '조직_관리'] as const;
         const sheetStatus = new Map<string, { status: '처리됨' | '누락' | '오류' | '스킵'; detail?: string }>();
-        requiredSheets.forEach(s => {
-          if (s === OBS_CANONICAL_SHEET) {
-            const hasObs = sheetNames.some(n => OBS_SHEET_ALIASES.includes(n as any) || n.includes('OBS'));
-            sheetStatus.set(s, hasObs ? { status: '스킵' } : { status: '누락' });
-          } else {
-            sheetStatus.set(s, sheetNames.includes(s) ? { status: '스킵' } : { status: '누락' });
-          }
-        });
+        requiredSheets.forEach(s => sheetStatus.set(s, sheetNames.includes(s) ? { status: '스킵' } : { status: '누락' }));
         let processedSheets = 0;
         let totalErrors: string[] = [];
         const sheetSummaries = new Map<string, { created: number; updated: number; unchanged: number }>();
-        let nextCategoryMasterForThisUpload: CategoryMaster | null = null;
+
+        // ✅ 처리 순서 고정: 조직 -> Task -> 업무_구분 -> OBS -> 사용자 (조직 먼저 처리 후 다른 데이터 검증 가능)
+        const getSheetPriority = (name: string) => {
+          if (name === '조직_관리' || name.includes('조직')) return -1;
+          if (name === 'Task_등록' || name === 'Task 관리' || name.replace(/\s+/g, '') === 'Task관리' || name.includes('Task')) return 0;
+          if (name === '업무_구분' || name.includes('업무')) return 1;
+          if (name === 'OBS_관리' || name.includes('OBS')) return 2;
+          if (name === '사용자_관리' || name.includes('사용자')) return 3;
+          return 99;
+        };
+        const orderedSheetNames = [...sheetNames].sort((a, b) => getSheetPriority(a) - getSheetPriority(b));
+
+        // ✅ 같은 파일 내 업무_구분 업로드가 있다면, 그 결과를 OBS Lv.3 검증에 반영하기 위한 로컬 스냅샷
+        let categoryMasterForObsValidation: CategoryMaster =
+          (data.organization.departments[0]?.teams[0]?.categoryMaster as any) || categoryMasterData;
 
         // 각 시트 처리
-        sheetNames.forEach(sheetName => {
+        orderedSheetNames.forEach(sheetName => {
           const sheet = workbook.Sheets[sheetName];
           const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }) as any[][];
 
@@ -6433,10 +7276,11 @@ const App = () => {
             } else if (sheetName === '업무_구분' || sheetName.includes('업무')) {
               // 업무 구분 처리
               const rows = jsonData.slice(1); // 헤더 제외
-              const catErrors = handleCategoryUpload(rows, {
+              const catResult = handleCategoryUpload(rows, {
                 onSummary: (s) => sheetSummaries.set('업무_구분', s),
-                onNextMaster: (m) => { nextCategoryMasterForThisUpload = m; }
-              }) || [];
+                onNextCategoryMaster: (next) => { categoryMasterForObsValidation = next; }
+              });
+              const catErrors = catResult.errors || [];
               if (catErrors.length > 0) {
                 totalErrors.push(...catErrors.map(err => `[${sheetName} 시트] ${err}`));
                 sheetStatus.set('업무_구분', { status: '오류', detail: `오류 ${catErrors.length}건` });
@@ -6444,18 +7288,32 @@ const App = () => {
                 sheetStatus.set('업무_구분', { status: '처리됨' });
               }
               processedSheets++;
-            } else if (OBS_SHEET_ALIASES.includes(sheetName as any) || sheetName.includes('OBS')) {
+            } else if (sheetName === 'OBS_관리' || sheetName.includes('OBS')) {
               // OBS 관리 처리
               const rows = jsonData.slice(1); // 헤더 제외
               const obsErrors = handleOBSUpload(rows, {
-                onSummary: (s) => sheetSummaries.set(OBS_CANONICAL_SHEET, s),
-                categoryMasterOverride: nextCategoryMasterForThisUpload || undefined
+                onSummary: (s) => sheetSummaries.set('OBS_관리', s),
+                categoryMasterForValidation: categoryMasterForObsValidation
               }) || [];
               if (obsErrors.length > 0) {
                 totalErrors.push(...obsErrors.map(err => `[${sheetName} 시트] ${err}`));
-                sheetStatus.set(OBS_CANONICAL_SHEET, { status: '오류', detail: `오류 ${obsErrors.length}건` });
+                sheetStatus.set('OBS_관리', { status: '오류', detail: `오류 ${obsErrors.length}건` });
               } else {
-                sheetStatus.set(OBS_CANONICAL_SHEET, { status: '처리됨' });
+                sheetStatus.set('OBS_관리', { status: '처리됨' });
+              }
+              processedSheets++;
+            } else if (sheetName === '조직_관리' || sheetName.includes('조직')) {
+              // 조직 관리 처리
+              const rows = jsonData.slice(1); // 헤더 제외
+              const orgErrors = handleOrgUpload(rows, {
+                collectErrors: true,
+                onSummary: (s) => sheetSummaries.set('조직_관리', s)
+              }) || [];
+              if (orgErrors.length > 0) {
+                totalErrors.push(...orgErrors.map(err => `[${sheetName} 시트] ${err}`));
+                sheetStatus.set('조직_관리', { status: '오류', detail: `오류 ${orgErrors.length}건` });
+              } else {
+                sheetStatus.set('조직_관리', { status: '처리됨' });
               }
               processedSheets++;
             } else if (sheetName === '사용자_관리' || sheetName.includes('사용자')) {
@@ -6478,9 +7336,10 @@ const App = () => {
           } catch (error: any) {
             totalErrors.push(`${sheetName} 시트 처리 중 오류: ${error.message}`);
             // 표준 시트명으로 매핑(가능한 경우)
+            if (sheetName.includes('조직')) sheetStatus.set('조직_관리', { status: '오류', detail: error.message });
             if (sheetName.includes('Task')) sheetStatus.set('Task 관리', { status: '오류', detail: error.message });
             if (sheetName.includes('업무')) sheetStatus.set('업무_구분', { status: '오류', detail: error.message });
-            if (sheetName.includes('OBS')) sheetStatus.set(OBS_CANONICAL_SHEET, { status: '오류', detail: error.message });
+            if (sheetName.includes('OBS')) sheetStatus.set('OBS_관리', { status: '오류', detail: error.message });
             if (sheetName.includes('사용자')) sheetStatus.set('사용자_관리', { status: '오류', detail: error.message });
           }
         });
@@ -6495,31 +7354,27 @@ const App = () => {
           return `- [${s}] ${st.status}${extra}${summaryText}`;
         });
 
-        if (totalErrors.length > 0 || statusLines.some(l => l.includes('누락') || l.includes('오류'))) {
-          // ✅ 처리상태/오류 사유를 분리하여 모달에서 섹션별 표시
-          setIntegratedUploadStatusLines(statusLines);
-          setIntegratedUploadErrorReasons(totalErrors);
-          setUploadErrors([]); // legacy errors 초기화(혼합 표시 방지)
-          setErrorModalTitle('통합 업로드 결과');
-          setIsErrorModalOpen(true);
-          if (totalErrors.length > 0) addNotification('통합 업로드 중 일부 오류가 발생했습니다.', 'error');
+        // ✅ 항상 통합 업로드 결과 모달 표시 (에러 유무와 관계없이)
+        setIntegratedUploadStatusLines(statusLines);
+        setIntegratedUploadErrorReasons(totalErrors);
+        setUploadErrors([]); // legacy errors 초기화(혼합 표시 방지)
+        setErrorModalTitle('통합 업로드 결과');
+        setIsErrorModalOpen(true);
+        
+        // 알림 표시
+        if (totalErrors.length > 0) {
+          addNotification('통합 업로드 중 일부 오류가 발생했습니다.', 'error');
         } else if (processedSheets > 0) {
           addNotification(`${processedSheets}개 시트가 성공적으로 처리되었습니다.`, 'success');
-        } else {
-          // 처리된 시트가 없어도 결과(누락/스킵)는 보여줌
-          setIntegratedUploadStatusLines(statusLines);
-          setIntegratedUploadErrorReasons([]);
-          setUploadErrors([]);
-          setErrorModalTitle('통합 업로드 결과');
-          setIsErrorModalOpen(true);
         }
 
         // 파일 입력 초기화
         e.target.value = '';
-      } catch (error) {
+      } catch (error: any) {
         console.error('통합 업로드 오류:', error);
-        alert('파일을 읽는 중 오류가 발생했습니다.');
-        e.target.value = '';
+        const errorMessage = error?.message || String(error) || '알 수 없는 오류';
+        alert(`파일을 읽는 중 오류가 발생했습니다.\n\n오류 내용: ${errorMessage}`);
+        if (e.target) e.target.value = '';
       }
     };
   };
@@ -6940,10 +7795,11 @@ const App = () => {
     rows: any[][],
     opts?: {
       onSummary?: (s: { created: number; updated: number; unchanged: number }) => void;
-      onNextMaster?: (m: CategoryMaster) => void;
+      onNextCategoryMaster?: (next: CategoryMaster) => void;
     }
-  ): string[] => {
-    const activeCategoryData = data.organization.departments[0]?.teams[0]?.categoryMaster || {};
+  ): { errors: string[]; nextCategoryMaster: CategoryMaster } => {
+    const activeCategoryData: CategoryMaster =
+      (data.organization.departments[0]?.teams[0]?.categoryMaster as any) || {};
     const newCategoryData = JSON.parse(JSON.stringify(activeCategoryData));
     let addedCount = 0;
     let noChangeCount = 0;
@@ -7009,10 +7865,9 @@ const App = () => {
     } else if (addedCount === 0) {
       addNotification('업무 구분 업로드: 변경사항 없음', 'success');
     }
-    // ✅ 통합 업로드에서 같은 파일 내 OBS 검증에 사용 (setState 반영 전이라도 최신 마스터를 전달)
-    opts?.onNextMaster?.(newCategoryData);
     opts?.onSummary?.({ created: addedCount, updated: 0, unchanged: noChangeCount });
-    return errors;
+    opts?.onNextCategoryMaster?.(newCategoryData);
+    return { errors, nextCategoryMaster: newCategoryData };
   };
 
   // OBS 관리 업로드 헬퍼
@@ -7023,7 +7878,7 @@ const App = () => {
     rows: any[][],
     opts?: {
       onSummary?: (s: { created: number; updated: number; unchanged: number }) => void;
-      categoryMasterOverride?: CategoryMaster;
+      categoryMasterForValidation?: CategoryMaster;
     }
   ): string[] => {
     const activeOBSData = data.organization.departments[0]?.teams[0]?.obsMaster || {};
@@ -7033,26 +7888,22 @@ const App = () => {
     let skippedCount = 0;
     const errors: string[] = [];
     const norm = (v: any) => (v ?? '').toString().trim();
-    // ✅ Lv.3(업무 구분3) 유효성 검증: 업무_구분(Lv.3)에 존재하지 않으면 에러
+    // ✅ Lv.3(업무 구분3) 유효성 검증: 업무_구분(Lv.3)에 없는 값이면 오류
     const FIXED_LV1_OPTIONS = ["1. 중점과제", "2. 지시과제", "3. 자체과제", "4. 현장지원", "5. 기타"];
     const categoryMasterForValidation =
-      opts?.categoryMasterOverride ||
-      data.organization.departments[0]?.teams[0]?.categoryMaster ||
-      categoryMasterData;
-    const allCategoryLv3 = new Set<string>();
-    try {
-      Object.values(categoryMasterForValidation || {}).forEach((lv2Obj: any) => {
-        Object.values(lv2Obj || {}).forEach((lv3Arr: any) => {
-          if (Array.isArray(lv3Arr)) lv3Arr.forEach(v => allCategoryLv3.add(norm(v)));
-        });
-      });
-    } catch {
-      // ignore
-    }
-    if (allCategoryLv3.size === 0) {
-      errors.push('업무_구분(Lv.3) 데이터가 없어 OBS 업로드를 진행할 수 없습니다.');
-      return errors;
-    }
+      (opts?.categoryMasterForValidation as any) ||
+      ((data.organization.departments[0]?.teams[0]?.categoryMaster as any) || categoryMasterData);
+    const isLv3Valid = (lv3Name: string) => {
+      if (!lv3Name) return false;
+      for (const lv1Key of Object.keys(categoryMasterForValidation || {})) {
+        const lv2Obj = (categoryMasterForValidation as any)[lv1Key] || {};
+        for (const lv2Key of Object.keys(lv2Obj)) {
+          const list = lv2Obj[lv2Key];
+          if (Array.isArray(list) && list.includes(lv3Name)) return true;
+        }
+      }
+      return false;
+    };
 
     rows.forEach((row, index) => {
       const rowIndex = index + 2; // 헤더 제외 실제 행 번호
@@ -7089,20 +7940,11 @@ const App = () => {
         return;
       }
 
-      // Lv.3(업무 구분3) 존재 검증
-      const lv3Raw = lv3;
-      const lv3Stripped = lv3Raw.replace(/\s*\([^)]*\)\s*$/, '').trim();
-      const lv3Ok =
-        (lv3Raw && allCategoryLv3.has(norm(lv3Raw))) ||
-        (lv3Stripped && allCategoryLv3.has(norm(lv3Stripped)));
-      if (!lv3Ok) {
-        errors.push(`행 ${rowIndex}: Lv.3 "${lv3Raw}"는 업무_구분(Lv.3)에 존재하지 않습니다.`);
+      // ✅ Lv.3(업무 구분3) 존재 여부 체크
+      if (!isLv3Valid(lv3)) {
+        errors.push(`행 ${rowIndex}: Lv.3 "${lv3}"가 업무_구분(Lv.3)에 존재하지 않습니다.`);
         skippedCount++;
         return;
-      }
-      // 저장은 마스터와 동일한 이름(괄호 제거) 우선
-      if (!allCategoryLv3.has(norm(lv3Raw)) && allCategoryLv3.has(norm(lv3Stripped))) {
-        lv3 = lv3Stripped;
       }
 
       if (!newOBSData[lv1]) {
@@ -7138,6 +7980,165 @@ const App = () => {
       addNotification('OBS 관리 업로드: 변경사항 없음', 'success');
     }
     opts?.onSummary?.({ created: addedCount, updated: 0, unchanged: noChangeCount });
+    return errors;
+  };
+
+  // 조직 관리 업로드 헬퍼
+  const handleOrgUpload = (
+    rows: any[][],
+    opts?: {
+      collectErrors?: boolean;
+      onSummary?: (s: { created: number; updated: number; unchanged: number }) => void;
+    }
+  ): string[] => {
+    const newOrg = JSON.parse(JSON.stringify(data.organization));
+    const errors: string[] = [];
+    let addedCount = 0;
+    let updatedCount = 0;
+    let unchangedCount = 0;
+
+    const norm = (v: any) => (v ?? '').toString().trim();
+
+    // 코드 중복 체크를 위한 맵
+    const deptCodeMap = new Map<string, string>(); // code -> deptId
+    const teamCodeMap = new Map<string, Map<string, string>>(); // deptId -> (code -> teamId)
+    const groupCodeMap = new Map<string, Map<string, Map<string, string>>>(); // deptId -> teamId -> (code -> groupId)
+
+    rows.forEach((row, index) => {
+      const rowIndex = index + 2; // 헤더 제외하고 실제 행 번호
+      const [deptCode, deptName, teamCode, teamName, groupCode, groupName] = row;
+
+      const deptCodeV = norm(deptCode);
+      const deptNameV = norm(deptName);
+      const teamCodeV = norm(teamCode);
+      const teamNameV = norm(teamName);
+      const groupCodeV = norm(groupCode);
+      const groupNameV = norm(groupName);
+
+      // 빈 행은 무시
+      if (!deptNameV && !teamNameV && !groupNameV) {
+        return;
+      }
+
+      // 필수 항목 체크
+      if (!deptNameV) {
+        errors.push(`행 ${rowIndex}: Lv.1 실명은 필수입니다.`);
+        return;
+      }
+
+      // 실 찾기 또는 생성
+      let dept = newOrg.departments.find((d: Department) => d.name === deptNameV);
+      if (!dept) {
+        const newDeptId = `dept-${Date.now()}-${Math.random()}`;
+        dept = {
+          id: newDeptId,
+          name: deptNameV,
+          teams: []
+        };
+        (dept as any).code = deptCodeV || '';
+        newOrg.departments.push(dept);
+        addedCount++;
+      } else {
+        // 기존 실이 있는 경우
+        if (deptCodeV && (dept as any).code !== deptCodeV) {
+          // 중복 체크
+          if (deptCodeMap.has(deptCodeV) && deptCodeMap.get(deptCodeV) !== dept.id) {
+            errors.push(`행 ${rowIndex}: Lv.1 코드 "${deptCodeV}"는 이미 사용 중입니다.`);
+            return;
+          }
+          (dept as any).code = deptCodeV;
+          updatedCount++;
+        } else {
+          unchangedCount++;
+        }
+      }
+      deptCodeMap.set((dept as any).code || '', dept.id);
+
+      // 팀이 있는 경우
+      if (teamNameV) {
+        let team = dept.teams.find((t: Team) => t.name === teamNameV);
+        if (!team) {
+          const newTeamId = `team-${Date.now()}-${Math.random()}`;
+          team = {
+            id: newTeamId,
+            name: teamNameV,
+            groups: []
+          };
+          (team as any).code = teamCodeV || '';
+          dept.teams.push(team);
+          addedCount++;
+        } else {
+          // 기존 팀이 있는 경우
+          if (teamCodeV && (team as any).code !== teamCodeV) {
+            // 중복 체크
+            if (!teamCodeMap.has(dept.id)) {
+              teamCodeMap.set(dept.id, new Map());
+            }
+            const deptTeamMap = teamCodeMap.get(dept.id)!;
+            if (deptTeamMap.has(teamCodeV) && deptTeamMap.get(teamCodeV) !== team.id) {
+              errors.push(`행 ${rowIndex}: Lv.2 코드 "${teamCodeV}"는 같은 실 내에서 이미 사용 중입니다.`);
+              return;
+            }
+            (team as any).code = teamCodeV;
+            updatedCount++;
+          } else {
+            unchangedCount++;
+          }
+        }
+        if (!teamCodeMap.has(dept.id)) {
+          teamCodeMap.set(dept.id, new Map());
+        }
+        teamCodeMap.get(dept.id)!.set((team as any).code || '', team.id);
+
+        // 그룹이 있는 경우
+        if (groupNameV) {
+          let group = team.groups.find((g: Group) => g.name === groupNameV);
+          if (!group) {
+            const newGroupId = `group-${Date.now()}-${Math.random()}`;
+            group = {
+              id: newGroupId,
+              name: groupNameV,
+              members: []
+            };
+            (group as any).code = groupCodeV || '';
+            team.groups.push(group);
+            addedCount++;
+          } else {
+            // 기존 그룹이 있는 경우
+            if (groupCodeV && (group as any).code !== groupCodeV) {
+              // 중복 체크
+              if (!groupCodeMap.has(dept.id)) {
+                groupCodeMap.set(dept.id, new Map());
+              }
+              if (!groupCodeMap.get(dept.id)!.has(team.id)) {
+                groupCodeMap.get(dept.id)!.set(team.id, new Map());
+              }
+              const teamGroupMap = groupCodeMap.get(dept.id)!.get(team.id)!;
+              if (teamGroupMap.has(groupCodeV) && teamGroupMap.get(groupCodeV) !== group.id) {
+                errors.push(`행 ${rowIndex}: Lv.3 코드 "${groupCodeV}"는 같은 팀 내에서 이미 사용 중입니다.`);
+                return;
+              }
+              (group as any).code = groupCodeV;
+              updatedCount++;
+            } else {
+              unchangedCount++;
+            }
+          }
+          if (!groupCodeMap.has(dept.id)) {
+            groupCodeMap.set(dept.id, new Map());
+          }
+          if (!groupCodeMap.get(dept.id)!.has(team.id)) {
+            groupCodeMap.get(dept.id)!.set(team.id, new Map());
+          }
+          groupCodeMap.get(dept.id)!.get(team.id)!.set((group as any).code || '', group.id);
+        }
+      }
+    });
+
+    if (addedCount > 0 || updatedCount > 0) {
+      setData(prev => ({ ...prev, organization: newOrg }));
+    }
+    opts?.onSummary?.({ created: addedCount, updated: updatedCount, unchanged: unchangedCount });
     return errors;
   };
 
@@ -7177,6 +8178,11 @@ const App = () => {
       const positionV = norm(position);
       const roleTextV = norm(roleText);
 
+      // ✅ 빈 행 건너뛰기: 모든 필수 필드가 비어있으면 스킵
+      if (!nameV && !loginIdV && !deptNameV && !teamNameV && !groupNameV) {
+        return; // 에러 없이 건너뜀
+      }
+
       // 권한 텍스트를 role로 변환 (템플릿: 관리자/실장/팀장/그룹장/팀원)
       let role: UserRole = 'member';
       if (roleTextV === '관리자') role = 'admin';
@@ -7207,11 +8213,11 @@ const App = () => {
         return;
       }
 
-      // ID 중복 체크
+      // ID 중복 체크 (이미 존재하는 ID는 스킵하되 에러로 표시하지 않음 - 업데이트는 별도 기능)
       if (existingLoginIds.has(loginIdV)) {
-        errors.push(`행 ${rowIndex}: ID "${loginIdV}"가 이미 존재합니다.`);
+        // 중복 ID는 건너뛰지만, 사용자에게는 정보성 메시지로 표시
         skippedCount++;
-        return;
+        return; // 에러 목록에 추가하지 않음 (이미 존재하는 데이터는 정상)
       }
 
       // 조직 구조 찾기
@@ -7307,7 +8313,8 @@ const App = () => {
       name: uniqueName,
       createdByRole: task.createdByRole ?? inferredRole,
       createdVia: task.createdVia ?? 'manual',
-      registration: task.registration ?? 'R.0'
+      // ✅ Task 신규 등록(수동 등록)은 등록구분을 NR.0부터 시작
+      registration: task.registration ?? 'NR.0'
     };
 
     // ✅ Task 등록 시 OBS 관리 자동 등록:
@@ -7781,8 +8788,8 @@ const App = () => {
 
   const accessibleTasks = useMemo(() => {
     if (!currentUser) return [];
-    return getAccessibleTasks(currentUser, data.tasks);
-  }, [currentUser, data.tasks]);
+    return getAccessibleTasks(currentUser, data.tasks, data.organization);
+  }, [currentUser, data.tasks, data.organization]);
 
   const filteredTasks = useMemo(() => { 
     let tasks = accessibleTasks;
@@ -8273,7 +9280,9 @@ const ViewControls = () => {
       setFilters({ team: team.id, group: groupId, member: firstMember?.id || '' });
     };
 
-    if (currentView === 'department') return <DivisionDashboard data={data} tasks={dashboardBaseTasks} targetYear={targetYear} onGoToTeam={handleGoToTeam} />;
+    // ✅ 실(Department) 대시보드 집계: 모든 팀원 과제 기준(기간만 적용, 활성/비활성 포함)
+    const divisionDashboardTasks = filterTasksByDateRange(data.tasks, filterStartMonth, filterEndMonth);
+    if (currentView === 'department') return <DivisionDashboard data={data} tasks={divisionDashboardTasks} targetYear={targetYear} onGoToTeam={handleGoToTeam} />;
     if (currentView === 'team') { const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team); const teamTasks = dashboardBaseTasks.filter(t => t.team === selectedTeam?.name); if (selectedTeam) return <TeamDashboard team={selectedTeam} tasks={teamTasks} targetYear={targetYear} onGoToGroup={handleGoToGroup} />; }
     if (currentView === 'group') {
       const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team);
@@ -8311,6 +9320,83 @@ const ViewControls = () => {
     const resizeStartRef = useRef<{ x: number; widths: number[] } | null>(null);
     const tableScrollRef = useRef<HTMLDivElement | null>(null);
     const lastScrollPosRef = useRef<{ top: number; left: number }>({ top: 0, left: 0 });
+    const savedScrollPosRef = useRef<{ top: number; left: number } | null>(null); // 버튼 클릭 시점의 위치
+    const isRestoringRef = useRef<boolean>(false); // 복원 중 플래그
+    const restoreTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 복원 타이머 참조
+    
+    const captureTableScroll = useCallback(() => {
+      const el = tableScrollRef.current;
+      if (!el) return;
+      // 버튼 클릭 시점의 스크롤 위치를 별도로 저장 (복원용)
+      // 이전 복원 타이머가 있으면 취소
+      if (restoreTimeoutRef.current) {
+        clearTimeout(restoreTimeoutRef.current);
+        restoreTimeoutRef.current = null;
+      }
+      savedScrollPosRef.current = { top: el.scrollTop, left: el.scrollLeft };
+      // 현재 위치도 업데이트
+      lastScrollPosRef.current = { top: el.scrollTop, left: el.scrollLeft };
+    }, []);
+    
+    // 상태 업데이트 후 스크롤 복원 헬퍼
+    const restoreScrollAfterUpdate = useCallback(() => {
+      // 복원할 위치가 없으면 복원하지 않음
+      const savedPos = savedScrollPosRef.current;
+      if (!savedPos) return;
+      
+      // 이미 복원 중이면 중복 실행 방지
+      if (isRestoringRef.current) return;
+      
+      isRestoringRef.current = true;
+      
+      // 이전 복원 타이머가 있으면 취소
+      if (restoreTimeoutRef.current) {
+        clearTimeout(restoreTimeoutRef.current);
+      }
+      
+      // DOM 업데이트를 기다린 후 복원 (더 안정적인 타이밍)
+      restoreTimeoutRef.current = setTimeout(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const el = tableScrollRef.current;
+            if (!el) {
+              isRestoringRef.current = false;
+              restoreTimeoutRef.current = null;
+              return;
+            }
+            
+            const { top, left } = savedPos;
+            const currentTop = el.scrollTop;
+            const currentLeft = el.scrollLeft;
+            
+            // 저장된 위치와 현재 위치가 다르면 복원 (1px 이상 차이)
+            const shouldRestoreTop = Math.abs(currentTop - top) > 1;
+            const shouldRestoreLeft = Math.abs(currentLeft - left) > 1;
+            
+            if (shouldRestoreTop || shouldRestoreLeft) {
+              // 복원 실행
+              if (shouldRestoreTop) {
+                el.scrollTop = top;
+              }
+              if (shouldRestoreLeft) {
+                el.scrollLeft = left;
+              }
+              // 복원 후 현재 위치 업데이트
+              lastScrollPosRef.current = { top: el.scrollTop, left: el.scrollLeft };
+            } else {
+              // 복원이 필요 없으면 저장된 위치 초기화 (다음 버튼 클릭까지 유지하지 않음)
+              savedScrollPosRef.current = null;
+            }
+            
+            // 복원 완료 후 플래그 해제 (onScroll 이벤트가 처리되도록 짧은 지연)
+            setTimeout(() => {
+              isRestoringRef.current = false;
+              restoreTimeoutRef.current = null;
+            }, 10);
+          });
+        });
+      }, 0);
+    }, []);
 
     useEffect(() => {
       // 외부에서 query가 바뀐 경우(예: 초기화) 입력값 동기화
@@ -8401,28 +9487,70 @@ const ViewControls = () => {
     }, [resizingIndex, handleMouseMove, handleMouseUp]);
 
     // ✅ 어떤 버튼/필터를 눌러도 테이블 스크롤이 상단으로 튀지 않도록 복원
+    // 상태 변경 후 스크롤 복원 (버튼 클릭 시점의 저장된 위치로 복원)
     useLayoutEffect(() => {
-      const el = tableScrollRef.current;
-      if (!el) return;
-      const { top, left } = lastScrollPosRef.current;
-      // 렌더 후 프레임에서 복원(테이블 DOM 갱신으로 스크롤 리셋되는 케이스 방지)
-      requestAnimationFrame(() => {
-        const el2 = tableScrollRef.current;
-        if (!el2) return;
-        el2.scrollTop = top;
-        el2.scrollLeft = left;
-      });
-    });
+      // savedScrollPosRef에 저장된 위치가 있으면 복원 시도
+      // 단, 복원 중이 아닐 때만 실행 (중복 방지)
+      if (savedScrollPosRef.current && !isRestoringRef.current) {
+        // DOM이 완전히 업데이트될 때까지 대기 후 복원
+        // tableBody가 useMemo로 재생성되면서 ref가 새 DOM에 연결되는 것을 고려
+        const savedPos = savedScrollPosRef.current;
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const el = tableScrollRef.current;
+            if (el && savedScrollPosRef.current === savedPos) {
+              // ref가 새 DOM에 연결되었을 수 있으므로 즉시 복원
+              if (el.scrollTop === 0 && savedPos.top > 0) {
+                el.scrollTop = savedPos.top;
+              }
+              if (el.scrollLeft === 0 && savedPos.left > 0) {
+                el.scrollLeft = savedPos.left;
+              }
+              // 추가로 restoreScrollAfterUpdate도 호출 (더 정확한 복원)
+              restoreScrollAfterUpdate();
+            }
+          });
+        });
+      }
+    }, [statusFilter, showInactive, excludeCompleted, taskSearchQuery, sortedAndFilteredTasks.length, restoreScrollAfterUpdate]);
+    
+    // ✅ 모달이 열릴 때도 스크롤 위치 유지 (모달 상태 변경 감지)
+    // useLayoutEffect에서 이미 복원을 시도하므로, 여기서는 추가 보완만 수행
+    useEffect(() => {
+      if (isEditModalOpen || isIssueModalOpen || isRevisionModalOpen) {
+        // 모달이 열린 후 약간의 지연을 두고 복원 시도 (DOM 완전 업데이트 대기)
+        // 단, 복원 중이 아니고 저장된 위치가 있을 때만
+        const timer = setTimeout(() => {
+          if (savedScrollPosRef.current && !isRestoringRef.current) {
+            restoreScrollAfterUpdate();
+          }
+        }, 50);
+        return () => clearTimeout(timer);
+      }
+    }, [isEditModalOpen, isIssueModalOpen, isRevisionModalOpen, restoreScrollAfterUpdate]);
 
     const tableBody = useMemo(() => (
       <div
         className="table-responsive"
         ref={tableScrollRef}
         onScroll={(e) => {
-          lastScrollPosRef.current = {
-            top: e.currentTarget.scrollTop,
-            left: e.currentTarget.scrollLeft
-          };
+          // 복원 중이 아닐 때만 위치 저장 (복원 중에는 저장하지 않아서 충돌 방지)
+          // 사용자가 직접 스크롤한 경우에만 위치 업데이트
+          if (!isRestoringRef.current) {
+            const newTop = e.currentTarget.scrollTop;
+            const newLeft = e.currentTarget.scrollLeft;
+            lastScrollPosRef.current = { top: newTop, left: newLeft };
+            // 사용자가 스크롤하면 저장된 복원 위치는 무효화 (의도하지 않은 복원 방지)
+            // 단, 저장된 위치와 현재 위치가 같으면 유지 (복원이 성공한 경우)
+            if (savedScrollPosRef.current) {
+              const { top: savedTop, left: savedLeft } = savedScrollPosRef.current;
+              const isSamePosition = Math.abs(newTop - savedTop) <= 1 && Math.abs(newLeft - savedLeft) <= 1;
+              if (!isSamePosition) {
+                // 사용자가 다른 위치로 스크롤했으면 저장된 위치 초기화
+                savedScrollPosRef.current = null;
+              }
+            }
+          }
         }}
       >
             <table> 
@@ -8486,15 +9614,30 @@ const ViewControls = () => {
                       canEdit={canEditTaskForUser(task)}
                       canToggleActive={canToggleActiveForUser(task)}
                       showToggleColumn={showToggleColumn}
-                      onEdit={handleEdit}
-                      onOpenIssueModal={() => {
-                        setSelectedTaskForIssues(task);
-                        setIssueModalOpen(true);
+                      onEdit={(t) => { 
+                        // 스크롤 위치를 먼저 저장
+                        captureTableScroll(); 
+                        // 상태 업데이트를 지연시켜 스크롤 복원이 먼저 실행되도록 함
+                        requestAnimationFrame(() => {
+                          handleEdit(t);
+                        });
                       }}
-                      onToggleActive={handleToggleActive}
+                      onOpenIssueModal={() => {
+                        captureTableScroll();
+                        // 상태 업데이트를 지연시켜 스크롤 복원이 먼저 실행되도록 함
+                        requestAnimationFrame(() => {
+                          setSelectedTaskForIssues(task);
+                          setIssueModalOpen(true);
+                        });
+                      }}
+                      onToggleActive={(id, isActive) => { captureTableScroll(); handleToggleActive(id, isActive); }}
                       onOpenRevisionModal={(t) => {
-                        setSelectedTaskForRevision(t);
-                        setRevisionModalOpen(true);
+                        captureTableScroll();
+                        // 상태 업데이트를 지연시켜 스크롤 복원이 먼저 실행되도록 함
+                        requestAnimationFrame(() => {
+                          setSelectedTaskForRevision(t);
+                          setRevisionModalOpen(true);
+                        });
                       }}
                     />
                   ))
@@ -8524,13 +9667,14 @@ const ViewControls = () => {
 
     return (
       <> 
-        {drillDownIds && (<div className="drilldown-banner"> <span>🔍 대시보드에서 선택된 <strong>{drillDownIds.size}</strong>개의 Task를 조회 중입니다.</span> <button className="btn btn-sm btn-secondary" onClick={() => setDrillDownIds(null)}>전체 목록 보기</button> </div>)} 
+        {drillDownIds && (<div className="drilldown-banner"> <span>🔍 대시보드에서 선택된 <strong>{drillDownIds.size}</strong>개의 Task를 조회 중입니다.</span> <button className="btn btn-sm btn-secondary" onClick={() => { captureTableScroll(); setDrillDownIds(null); }}>전체 목록 보기</button> </div>)} 
         <div className="task-table sticky-table-layout"> 
           <div className="table-header sticky-control-bar"> 
             <h2 className="chart-title">Task 상세 현황 <span className="task-count-badge">{sortedAndFilteredTasks.length}</span></h2> 
 
             {/* ✅ 검색(조회) 영역: table-controls 왼쪽에 고정 배치 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', marginRight: '10mm', flex: '0 0 auto' }}>
+            {/* ✅ 검색/조회 wrapper 폭 추가 20% 축소 (224px -> 179px) */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto', marginRight: '10mm', flex: '0 1 179px', maxWidth: '179px' }}>
               <div className="task-search" title="Task 검색">
                 <input
                   className="task-search-input"
@@ -8549,7 +9693,7 @@ const ViewControls = () => {
                   <button
                     className="task-search-clear"
                     type="button"
-                    onClick={() => { setTaskSearchInput(''); setTaskSearchQuery(''); }}
+                    onClick={() => { captureTableScroll(); setTaskSearchInput(''); setTaskSearchQuery(''); }}
                     aria-label="검색어 지우기"
                   >
                     ×
@@ -8559,37 +9703,60 @@ const ViewControls = () => {
               <button
                 type="button"
                 className="btn btn-secondary task-search-apply"
-                onClick={() => setTaskSearchQuery(taskSearchInput)}
+                onClick={() => { captureTableScroll(); setTaskSearchQuery(taskSearchInput); }}
+                style={{ padding: '0 8px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
               >
-                조회
+                검색
               </button>
             </div>
 
-            <div className="table-controls" style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap', justifyContent: 'flex-end', marginLeft: '0' }}> 
+            <div className="table-controls" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'nowrap', justifyContent: 'flex-end', marginLeft: '0', overflowX: 'auto', maxWidth: '100%' }}> 
               {!drillDownIds && (
                 <> 
                   <div className="table-controls-left" style={{ display: 'flex', gap: '10px', alignItems: 'center', marginRight: '10px' }}>
-                    <label className="checkbox-label" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', alignSelf: 'center', fontSize: '0.9rem', height: '19px', lineHeight: '19px', margin: 0, padding: 0 }}> <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} style={{ marginRight: '5px' }} /> 비활성 포함 </label> 
-                    <label className="checkbox-label" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', alignSelf: 'center', fontSize: '0.9rem', height: '19px', lineHeight: '19px', margin: 0, padding: 0 }}> <input type="checkbox" checked={excludeCompleted} onChange={handleExcludeCompletedChange} style={{ marginRight: '5px' }} /> 완료 제외 </label> 
+                    <label className="checkbox-label" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', alignSelf: 'center', fontSize: '0.9rem', height: '19px', lineHeight: '19px', margin: 0, padding: 0 }}>
+                      <input
+                        type="checkbox"
+                        checked={showInactive}
+                        onChange={e => { captureTableScroll(); setShowInactive(e.target.checked); }}
+                        style={{ marginRight: '5px' }}
+                      />
+                      비활성 포함
+                    </label> 
+                    <label className="checkbox-label" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', alignSelf: 'center', fontSize: '0.9rem', height: '19px', lineHeight: '19px', margin: 0, padding: 0 }}>
+                      <input
+                        type="checkbox"
+                        checked={excludeCompleted}
+                        onChange={(e) => { captureTableScroll(); handleExcludeCompletedChange(e as any); }}
+                        style={{ marginRight: '5px' }}
+                      />
+                      완료 제외
+                    </label> 
                   </div>
                   <div className="status-filter-buttons" style={{ display: 'flex', backgroundColor: '#f1f3f5', padding: '4px', borderRadius: '6px' }}>
                     {[{ value: '', label: '전체' }, { value: 'in-progress', label: '진행중' }, { value: 'delayed', label: '지연' }, { value: 'not-started', label: '미시작' }, { value: 'completed', label: '완료' }].map((opt) => (
-                      <button key={opt.value} onClick={() => setStatusFilter(opt.value)} style={{ padding: '5px 12px', border: 'none', backgroundColor: statusFilter === opt.value ? '#ffffff' : 'transparent', color: statusFilter === opt.value ? '#222' : '#868e96', fontWeight: statusFilter === opt.value ? 'bold' : 'normal', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', boxShadow: statusFilter === opt.value ? '0 1px 2px rgba(0,0,0,0.1)' : 'none', transition: 'all 0.2s ease' }}>{opt.label}</button>
+                      <button
+                        key={opt.value}
+                        onClick={() => { captureTableScroll(); setStatusFilter(opt.value); }}
+                        style={{ padding: '5px 12px', border: 'none', backgroundColor: statusFilter === opt.value ? '#ffffff' : 'transparent', color: statusFilter === opt.value ? '#222' : '#868e96', fontWeight: statusFilter === opt.value ? 'bold' : 'normal', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', boxShadow: statusFilter === opt.value ? '0 1px 2px rgba(0,0,0,0.1)' : 'none', transition: 'all 0.2s ease' }}
+                      >
+                        {opt.label}
+                      </button>
                     ))}
                   </div>
                 </>
               )} 
 
               <div className="action-buttons-container">
-                <button className="btn btn-primary action-btn" onClick={() => setDailyModalOpen(true)}>
+                <button className="btn btn-primary action-btn" onClick={() => { captureTableScroll(); setDailyModalOpen(true); }}>
                   <span className="btn-icon">⏱️</span>
                   <span className="btn-text">시수 입력</span>
                 </button>
-                <button className="btn btn-secondary action-btn" onClick={handleExport}>
+                <button className="btn btn-secondary action-btn" onClick={() => { captureTableScroll(); handleExport(); }}>
                   <span className="btn-icon">📥</span>
                   <span className="btn-text">내보내기</span>
                 </button>
-                <button className="btn btn-primary action-btn" onClick={handleOpenTaskModal}>
+                <button className="btn btn-primary action-btn" onClick={() => { captureTableScroll(); handleOpenTaskModal(); }}>
                   <span className="btn-icon">➕</span>
                   <span className="btn-text">Task 등록</span>
                 </button>
@@ -9019,7 +10186,7 @@ const CalendarView = ({ tasks, currentDate, setCurrentDate, onTaskClick, onDrill
         onNotification={addNotification}
         currentUser={currentUser}
       />
-      <IssueModal isOpen={isIssueModalOpen} onClose={() => setIssueModalOpen(false)} task={selectedTaskForIssues} onUpdate={handleUpdateIssues} user={currentUser} />
+      <IssueModal isOpen={isIssueModalOpen} onClose={() => setIssueModalOpen(false)} task={selectedTaskForIssues} onUpdate={handleUpdateIssues} user={currentUser} organization={data.organization} />
       <RevisionModal isOpen={isRevisionModalOpen} onClose={() => setRevisionModalOpen(false)} task={selectedTaskForRevision} />
       <DailyPerformanceModal
         isOpen={isDailyModalOpen}
