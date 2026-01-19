@@ -1,6 +1,6 @@
 // index.tsx 파일의 내용을 아래 코드로 완전히 교체하거나, 해당 부분만 수정하세요.
 
-import React, { Component, useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
+import React, { Component, useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 
 // --- Type Definitions ---
@@ -620,6 +620,40 @@ const calculateMonthlyTrends = (tasks: Task[], year: number) => {
 // [추가] Lv.2 기준 상태 집계 헬퍼 함수
 // 컴포넌트 외부(파일 상단 Utils 영역 근처)에 정의하세요.
 // -----------------------------------------------------------------------------
+const calculateLv1Stats = (tasks: Task[]) => {
+  // 1. Lv.1 별로 Task 그룹화 (Key: Category1)
+  const groups: Record<string, Task[]> = {};
+  
+  tasks.forEach(task => {
+    // 카테고리가 없는 경우 'Uncategorized'로 처리하거나 제외
+    const key = `${task.category1 || 'Uncategorized'}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(task);
+  });
+
+  const counts = { 'completed': 0, 'in-progress': 0, 'delayed': 0, 'not-started': 0 };
+  let totalLv1 = 0;
+
+  // 2. 각 Lv.1 그룹의 대표 상태 결정
+  Object.values(groups).forEach(groupTasks => {
+    if (groupTasks.length === 0) return;
+    totalLv1++;
+
+    const total = groupTasks.length;
+    const completedCount = groupTasks.filter(t => t.status === 'completed').length;
+    const delayedCount = groupTasks.filter(t => t.status === 'delayed').length;
+    const inProgressCount = groupTasks.filter(t => t.status === 'in-progress').length;
+    
+    // [로직] Lv.3가 모두 완료되어야 Lv.1이 완료
+    if (completedCount === total) counts['completed']++;
+    else if (delayedCount > 0) counts['delayed']++;
+    else if (inProgressCount > 0) counts['in-progress']++;
+    else counts['not-started']++;
+  });
+
+  return { counts, totalLv1 };
+};
+
 const calculateLv2Stats = (tasks: Task[]) => {
   // 1. Lv.2 별로 Task 그룹화 (Key: Category1 > Category2)
   const groups: Record<string, Task[]> = {};
@@ -666,6 +700,64 @@ const calculateLv2Stats = (tasks: Task[]) => {
 };
 
 // -----------------------------------------------------------------------------
+// [추가] 업무구분 2(category2) 기준 상태 집계 헬퍼 함수
+// - Key: Category2
+// -----------------------------------------------------------------------------
+const calculateCategory2Stats = (tasks: Task[]) => {
+  // 1. Category2 별로 Task 그룹화
+  const groups: Record<string, Task[]> = {};
+  tasks.forEach(task => {
+    const key = task.category2 || 'Uncategorized';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(task);
+  });
+
+  const counts = { 'completed': 0, 'in-progress': 0, 'delayed': 0, 'not-started': 0 };
+  let totalCategory2 = 0;
+
+  // 2. 각 Category2 그룹의 대표 상태 결정
+  Object.values(groups).forEach(groupTasks => {
+    if (groupTasks.length === 0) return;
+    totalCategory2++;
+    const total = groupTasks.length;
+    const completedCount = groupTasks.filter(t => t.status === 'completed').length;
+    const delayedCount = groupTasks.filter(t => t.status === 'delayed').length;
+    const inProgressCount = groupTasks.filter(t => t.status === 'in-progress').length;
+    
+    // [로직] 모든 Task가 완료되어야 Category2가 완료
+    if (completedCount === total) counts['completed']++;
+    else if (delayedCount > 0) counts['delayed']++;
+    else if (inProgressCount > 0) counts['in-progress']++;
+    else counts['not-started']++;
+  });
+
+  return { counts, totalCategory2 };
+};
+
+// -----------------------------------------------------------------------------
+// [추가] Task Code 기준 상태 집계 헬퍼 함수
+// - 각 Task를 개별적으로 집계 (Task Code = Task 단위)
+// - 비활성화된 Task는 집계에서 제외
+// -----------------------------------------------------------------------------
+const calculateTaskCodeStats = (tasks: Task[]) => {
+  // 비활성화된 Task 제외
+  const activeTasks = tasks.filter(task => task.isActive !== false);
+  
+  const counts = { 'completed': 0, 'in-progress': 0, 'delayed': 0, 'not-started': 0 };
+  const totalTaskCode = activeTasks.length;
+
+  // 각 Task의 상태를 직접 카운트
+  activeTasks.forEach(task => {
+    if (task.status === 'completed') counts['completed']++;
+    else if (task.status === 'delayed') counts['delayed']++;
+    else if (task.status === 'in-progress') counts['in-progress']++;
+    else counts['not-started']++;
+  });
+
+  return { counts, totalTaskCode };
+};
+
+// -----------------------------------------------------------------------------
 // [추가] Lv.3(Task 1) 기준 상태 집계 헬퍼 함수
 // - Key: Category1 > Category2 > Category3
 // -----------------------------------------------------------------------------
@@ -705,12 +797,12 @@ const calculateLv3Stats = (tasks: Task[]) => {
 // -----------------------------------------------------------------------------
 // [수정 1] GroupPerformanceCard (팀 대시보드 내 그룹 카드)
 // -----------------------------------------------------------------------------
-const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: number, onGoToGroup?: (groupId: string) => void }> = ({ group, tasks, targetYear, onGoToGroup }) => {
-  // [변경] 기존 단순 task loop 대신 Lv.2 집계 함수 사용
-  const { counts: statusCounts, totalLv2 } = useMemo(() => calculateLv2Stats(tasks), [tasks]);
+const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: number, onGoToGroup?: (groupId: string) => void }> = React.memo(({ group, tasks, targetYear, onGoToGroup }) => {
+  // [변경] Task Code 기준 집계 함수 사용
+  const { counts: statusCounts, totalTaskCode } = useMemo(() => calculateTaskCodeStats(tasks), [tasks]);
   
-  // 차트 데이터 구성 (total 변수를 Lv.2 개수로 변경)
-  const total = totalLv2 || 1; // 0나누기 방지
+  // 차트 데이터 구성 (total 변수를 Task Code 개수로 변경)
+  const total = totalTaskCode || 1; // 0나누기 방지
   
   const donutData = { 
     labels: ['Finished', 'On-Going', 'Delayed', 'Not Started'], 
@@ -749,10 +841,14 @@ const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: 
   // 여기서는 'Lv.1 과제 점유율'이므로 Task 개수 기준 유지 (또는 Lv.2 개수로 변경 가능). 
   // 요청사항은 "Progress Chart"이므로 위 donutData만 수정 적용함.
 
-  // ✅ MBO 분포: 업무구분 Lv.2 기준 - "Lv.2 진행건수(Lv.3 진행건수)/Lv.2 총 건수(Lv.3 총 건수)" 형식
+  // ✅ MBO 분포: 업무구분 Lv.2 기준 - "(Task code) 진행 건수/총건수, 진행률 (%)" 형식
+  // 도넛 차트와 동일하게 비활성화된 Task 제외
   const lv2Dist = useMemo(() => {
+    // 비활성화된 Task 제외 (도넛 차트와 동일한 기준)
+    const activeTasks = tasks.filter(task => task.isActive !== false);
+    
     const lv2Groups: Record<string, Task[]> = {};
-    tasks.forEach(t => {
+    activeTasks.forEach(t => {
       const k1 = String(t.category1 || '').trim();
       const k2 = String(t.category2 || '').trim();
       const key = `${k1}||${k2}`;
@@ -766,35 +862,29 @@ const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: 
         const label = (c1 && c2) ? `${c2}` : (c2 || c1 || '미분류');
         const fullLabel = (c1 && c2) ? `${c1} > ${c2}` : label;
         
-        // Lv.2 총 건수: 해당 Lv.2 조합의 개수 (보통 1)
-        const lv2Total = 1;
-        // Lv.3 총 건수: 해당 Lv.2에 속한 모든 Task 개수
-        const lv3Total = groupTasks.length;
-        
-        // Lv.2 진행건수: 해당 Lv.2가 진행중/지연/완료 상태인지 (진행중인 Task가 하나라도 있으면 1)
-        const lv2InProgress = groupTasks.some(t => ['in-progress', 'delayed', 'completed'].includes(t.status)) ? 1 : 0;
-        // Lv.3 진행건수: 해당 Lv.2에 속한 Task 중 진행중/지연/완료인 Task 개수
-        const lv3InProgress = groupTasks.filter(t => ['in-progress', 'delayed', 'completed'].includes(t.status)).length;
+        // 진행 건수: 해당 Lv.2에 속한 Task 중 진행중/지연/완료인 Task 개수 (Task Code 기준)
+        const inProgress = groupTasks.filter(t => ['in-progress', 'delayed', 'completed'].includes(t.status)).length;
+        // 총 건수: 해당 Lv.2에 속한 모든 Task 개수 (Task Code 기준)
+        const total = groupTasks.length;
+        // 진행률: (진행 건수 / 총 건수) * 100
+        const progressRate = total > 0 ? ((inProgress / total) * 100).toFixed(0) : '0';
         
         return {
           key,
           label,
           fullLabel,
-          lv2InProgress,
-          lv3InProgress,
-          lv2Total,
-          lv3Total,
-          displayText: `(Lv.2) ${lv2InProgress}/${lv2Total}건, (Lv.3) ${lv3InProgress}/${lv3Total}건`,
-          percentage: (lv3Total / tasks.length) * 100
+          inProgress,
+          total,
+          displayText: `(Task code) ${inProgress}/${total}건, ${progressRate}%`,
+          percentage: (total / activeTasks.length) * 100
         };
       })
-      .sort((a, b) => b.lv3Total - a.lv3Total)
-      .slice(0, 5);
+      .sort((a, b) => b.total - a.total);
   }, [tasks]);
   const getCategoryColor = (index: number) => ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796', '#5a5c69', '#f8f9fa'][index % 8];
 
   return (
-    <div className="group-performance-card">
+    <div className="group-performance-card" style={{ height: '350px' }}>
       <div className="group-card-header" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.name} ({(group as any).code || group.id})</span>
         {onGoToGroup && (
@@ -808,9 +898,9 @@ const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: 
            <div style={{ height: '140px', position: 'relative' }}>
              <ChartCanvas type="doughnut" data={donutData} options={{ cutout: '50%', plugins: { legend: { display: false } } }} />
              <div className="donut-center-text">
-                 {/* [변경] 중앙 텍스트를 Lv.2 총 개수로 변경 */}
-                 <span className="donut-total">{totalLv2}</span>
-                 <div style={{fontSize: '0.7rem', color: '#888'}}>Lv.2 Items</div>
+                 {/* [변경] 중앙 텍스트를 Task Code 총 개수로 변경 */}
+                 <span className="donut-total">{totalTaskCode}</span>
+                 <div style={{fontSize: '0.7rem', color: '#888'}}>Task Code</div>
              </div>
            </div>
            <div className="donut-legend">
@@ -836,18 +926,18 @@ const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: 
          <div className="group-stat-section mbo">
             {/* ... (MBO 부분 기존 동일) ... */}
             <h4 className="mbo-section-title">업무구분 (진행 건/총 건)</h4>
-            <div className="mbo-dist-container">
+            <div className="mbo-dist-container" style={{ maxHeight: '167px', overflowY: 'auto' }}>
                 {lv2Dist.map((item, idx) => (
                     <div key={item.key} className="mbo-dist-item">
                         <div className="mbo-dist-header">
                           <span className="mbo-dist-name" title={item.fullLabel} style={{ fontSize: '0.85rem' }}>{item.label}</span>
-                          <span className="mbo-dist-val" style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }} title={`(Lv.2) ${item.lv2InProgress}/${item.lv2Total}건, (Lv.3) ${item.lv3InProgress}/${item.lv3Total}건`}>{item.displayText}</span>
+                          <span className="mbo-dist-val" style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }} title={item.displayText}>{item.displayText}</span>
                         </div>
                         <div className="mbo-dist-track">
                           <div 
                             className="mbo-dist-fill" 
                             style={{ width: `${item.percentage}%`, backgroundColor: getCategoryColor(idx) }}
-                            title={`Lv.2 ${item.lv2InProgress}건, 진행률 ${item.percentage.toFixed(1)}%`}
+                            title={`${item.label}: ${item.displayText}`}
                           ></div>
                         </div>
                     </div>
@@ -857,42 +947,95 @@ const GroupPerformanceCard: React.FC<{ group: Group, tasks: Task[], targetYear: 
       </div>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  return prevProps.group.id === nextProps.group.id &&
+    prevProps.tasks.length === nextProps.tasks.length &&
+    prevProps.targetYear === nextProps.targetYear;
+});
 //0
 //2601080127
 
 
-const TeamDashboard = ({ team, tasks, targetYear, onGoToGroup }: { team: Team, tasks: Task[], targetYear: number, onGoToGroup?: (groupId: string) => void }) => {
-  return (
-    <div className="team-dashboard">
-      <h2 className="team-dashboard-title">Team</h2>
-      <div className="team-dashboard-subtitle">Progress and Status <span style={{ color: '#999', fontSize: '0.8rem', marginLeft: '10px' }}>과제 수행 현황 ({targetYear}년 기준)</span></div>
-      {team.groups.map(group => (
-        <GroupPerformanceCard
-          key={group.id}
-          group={group}
-          tasks={tasks.filter(t => t.group === group.name)}
-          targetYear={targetYear}
-          onGoToGroup={onGoToGroup}
-        />
-      ))}
-    </div>
-  )
-}
+const TeamDashboard = React.memo(({ team, tasks, targetYear, onGoToGroup }: { team: Team, tasks: Task[], targetYear: number, onGoToGroup?: (groupId: string) => void }) => {
+  // ✅ 팀뷰 집계는 Task Code 기준
+  const { counts: overallStatus, totalTaskCode } = useMemo(() => calculateTaskCodeStats(tasks), [tasks]);
+  const totalTaskCodeCount = totalTaskCode || 1;
 
-const AssigneeListCard = ({
+  const donutData = { labels: ['Finished', 'On-Going', 'Delayed', 'Not Started'], datasets: [{ data: [overallStatus['completed'], overallStatus['in-progress'], overallStatus['delayed'], overallStatus['not-started']], backgroundColor: ['#d9534f', '#5bc0de', '#f0ad4e', '#e2e3e5'], borderWidth: 0, }] };
+  
+  // Trend는 MH 기준이므로 기존 로직 유지
+  const overallTrend = useMemo(() => calculateMonthlyTrends(tasks, targetYear), [tasks, targetYear]);
+  const trendData = { labels: overallTrend.labels.map(l => l.slice(5)), datasets: [{ label: 'Plan', data: overallTrend.planned, borderColor: '#8884d8', backgroundColor: 'rgba(136, 132, 216, 0.2)', fill: true, tension: 0.4 }, { label: 'Actual', data: overallTrend.actual, borderColor: '#82ca9d', backgroundColor: 'rgba(130, 202, 157, 0.2)', fill: true, tension: 0.4 }] };
+  
+  // 비율 계산 함수
+  const getPct = (val: number) => ((val / totalTaskCodeCount) * 100).toFixed(1);
+
+  return (
+    <div className="division-dashboard">
+      <div className="division-sidebar-panel">
+        <div className="division-panel-card">
+          <h3 className="panel-title">Progress and Status (Task Code)</h3>
+          <div className="overall-donut-container">
+              <ChartCanvas type="doughnut" data={donutData} options={{ cutout: '50%', plugins: { legend: { display: false } } }} height="220px" />
+              <div className="overall-center-text">
+                  <span className="overall-total">{totalTaskCode}</span>
+                  <div style={{fontSize: '0.8rem', color: '#888'}}>Task Code</div>
+              </div>
+          </div>
+           <div className="metric-summary-grid">
+            <div className="metric-box"><span className="metric-label">Finished</span><span className="metric-val" style={{ color: '#d9534f' }}>{overallStatus['completed']}</span><span className="metric-pct">({getPct(overallStatus['completed'])}%)</span></div>
+            <div className="metric-box"><span className="metric-label">On-Going</span><span className="metric-val" style={{ color: '#5bc0de' }}>{overallStatus['in-progress']}</span><span className="metric-pct">({getPct(overallStatus['in-progress'])}%)</span></div>
+            <div className="metric-box"><span className="metric-label">Delayed</span><span className="metric-val" style={{ color: '#f0ad4e' }}>{overallStatus['delayed']}</span><span className="metric-pct">({getPct(overallStatus['delayed'])}%)</span></div>
+            <div className="metric-box"><span className="metric-label">Not Started</span><span className="metric-val" style={{ color: '#adb5bd' }}>{overallStatus['not-started']}</span><span className="metric-pct">({getPct(overallStatus['not-started'])}%)</span></div>
+          </div>
+        </div>
+        <div className="division-panel-card" style={{ flexGrow: 1 }}>
+          <div className="card-header-row">
+            <h3 className="panel-title" style={{ borderBottom: 'none', marginBottom: 0 }}>Man-hour Trend</h3>
+            <div className="chart-legend-text">
+                <div className="legend-item"><span className="legend-dot" style={{background: '#8884d8'}}></span>Plan</div>
+                <div className="legend-item"><span className="legend-dot" style={{background: '#82ca9d'}}></span>Actual</div>
+            </div>
+          </div>
+          <div className="trend-chart-container"><ChartCanvas type="line" data={trendData} options={{ plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }} height="200px" /></div>
+        </div>
+      </div>
+      <div className="division-main-grid" style={{ gridTemplateColumns: '1fr', gap: '20px' }}>
+        {team.groups.map(group => (
+          <GroupPerformanceCard
+            key={group.id}
+            group={group}
+            tasks={tasks.filter(t => t.group === group.name)}
+            targetYear={targetYear}
+            onGoToGroup={onGoToGroup}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}, (prevProps, nextProps) => {
+  return prevProps.team.id === nextProps.team.id &&
+    prevProps.tasks.length === nextProps.tasks.length &&
+    prevProps.targetYear === nextProps.targetYear;
+});
+
+const AssigneeListCard = React.memo(({
   group,
   tasks,
-  onGoToMemberDashboard
+  targetYear,
+  onGoToMemberDashboard,
+  currentUser
 }: {
   group: Group;
   tasks: Task[];
+  targetYear: number;
   onGoToMemberDashboard?: (memberId: string) => void;
+  currentUser?: UserContextType | null;
 }) => {
   const groupStats = useMemo(() => {
-    // ✅ 그룹 뷰(우측 담당자 카드) 집계는 업무구분 Lv.3(Task1) 기준
-    const { counts, totalLv3 } = calculateLv3Stats(tasks);
-    const total = totalLv3 || 1;
+    // ✅ 그룹 뷰(우측 담당자 카드) 집계는 Task Code 기준
+    const { counts, totalTaskCode } = calculateTaskCodeStats(tasks);
+    const total = totalTaskCode || 1;
     return {
       completed: counts['completed'],
       inProgress: counts['in-progress'],
@@ -900,44 +1043,105 @@ const AssigneeListCard = ({
       notStarted: counts['not-started'],
       total,
       completionRate: ((counts['completed'] / total) * 100).toFixed(0),
-      lv3Count: totalLv3
+      taskCodeCount: totalTaskCode
     };
   }, [tasks]);
 
-  const getMemberStats = (memberId: string) => {
-    const memberTasks = tasks.filter(t => t.assignee === memberId);
-    const { counts, totalLv3 } = calculateLv3Stats(memberTasks);
-    const total = totalLv3 || 1;
-    return {
-      completed: counts['completed'],
-      inProgress: counts['in-progress'],
-      delayed: counts['delayed'],
-      notStarted: counts['not-started'],
-      total,
-      completionRate: ((counts['completed'] / total) * 100).toFixed(0),
-      taskCount: totalLv3
-    };
-  };
+  const getCategoryColor = (index: number) => ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796', '#5a5c69', '#f8f9fa'][index % 8];
 
   return (
-    <div className="dashboard-card assignee-card-v2" style={{ display: 'flex', flexDirection: 'column', padding: '1.5rem' }}>
-      <div className="assignee-card-header"><h3 className="group-name-title">{group.name} ({(group as any).code || ''})</h3><span className="total-task-badge">{groupStats.lv3Count} Lv.3</span></div>
-      <div className="assignee-scroll-container">
-        <div className="member-progress-item group-total-item">
-          <div className="progress-info-row"><span className="label-text">Completion</span><span className="value-pct">{groupStats.completionRate}%</span></div>
-          <div className="stacked-progress-bar">
-            <div className="progress-segment completed" style={{ width: `${(groupStats.completed / groupStats.total) * 100}%` }} title={`완료: ${groupStats.completed}건`}></div>
-            <div className="progress-segment in-progress" style={{ width: `${(groupStats.inProgress / groupStats.total) * 100}%` }} title={`진행중: ${groupStats.inProgress}건`}></div>
-            <div className="progress-segment delayed" style={{ width: `${(groupStats.delayed / groupStats.total) * 100}%` }} title={`지연: ${groupStats.delayed}건`}></div>
-          </div>
-        </div>
-        {group.members.map(member => {
-          const stats = getMemberStats(member.id);
+    <div className="dashboard-card assignee-card-v2" style={{ display: 'flex', flexDirection: 'column', padding: '1.5rem', height: '2355px', overflowY: 'auto' }}>
+      <div className="assignee-card-header"><h3 className="group-name-title">{group.name} ({(group as any).code || ''})</h3><span className="total-task-badge">{groupStats.taskCodeCount} Task Code</span></div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1, minHeight: 0 }}>
+        {group.members
+          .filter(member => {
+            if (!currentUser) return true;
+            
+            const isDeptHead = member.role === 'dept_head' || (typeof member.position === 'string' && member.position.includes('실장'));
+            const isTeamLeader = member.role === 'team_leader' || (typeof member.position === 'string' && member.position.includes('팀장'));
+            const isGroupLeader = member.role === 'group_leader' || (typeof member.position === 'string' && member.position.includes('그룹장'));
+            
+            // 담당자(member) 권한: 실장/팀장/그룹장 카드 모두 숨김
+            if (currentUser.role === 'member') {
+              return !isDeptHead && !isTeamLeader && !isGroupLeader;
+            }
+            // 그룹장 권한: 실장/팀장 카드 숨김
+            else if (currentUser.role === 'group_leader') {
+              return !isDeptHead && !isTeamLeader;
+            }
+            // 팀장 권한: 실장 카드 숨김
+            else if (currentUser.role === 'team_leader') {
+              return !isDeptHead;
+            }
+            
+            return true;
+          })
+          .map(member => {
+          const memberTasks = tasks.filter(t => t.assignee === member.id);
+          const { counts, totalTaskCode } = calculateTaskCodeStats(memberTasks);
+          const total = totalTaskCode || 1;
+          const completionRate = total > 0 ? ((counts['completed'] / total) * 100).toFixed(0) : '0';
+
+          // 업무구분별 통계 (mbo 형식)
+          const category2Groups: Record<string, Task[]> = {};
+          memberTasks.forEach(t => {
+            const k2 = String(t.category2 || '').trim();
+            if (!category2Groups[k2]) category2Groups[k2] = [];
+            category2Groups[k2].push(t);
+          });
+          
+          const category2Dist = Object.entries(category2Groups)
+            .map(([key, groupTasks]) => {
+              const inProgress = groupTasks.filter(t => ['in-progress', 'delayed', 'completed'].includes(t.status)).length;
+              const total = groupTasks.length;
+              return {
+                key,
+                label: key || '미분류',
+                inProgress,
+                total,
+                displayText: `(Task Code) ${inProgress}/${total}건`,
+                percentage: memberTasks.length > 0 ? (total / memberTasks.length) * 100 : 0
+              };
+            })
+            .sort((a, b) => b.total - a.total);
+
+          // Monthly Man-hour 차트 데이터
+          const monthlyActual = new Array(12).fill(0);
+          const monthlyPlan = new Array(12).fill(0);
+          const currentYear = targetYear;
+          memberTasks.forEach(task => {
+            if (task.actual.hours && task.actual.startDate) {
+              const dist = distributeHoursByMonth(task.actual.startDate, task.actual.endDate, task.actual.hours, currentYear);
+              dist.forEach((h, i) => monthlyActual[i] += h);
+            }
+            const plan = getCurrentPlan(task);
+            if (plan.hours && plan.startDate) {
+              const dist = distributeHoursByMonth(plan.startDate, plan.endDate, plan.hours, currentYear);
+              dist.forEach((h, i) => monthlyPlan[i] += h);
+            }
+          });
+          const barChartData = {
+            labels: Array.from({ length: 12 }, (_, i) => `${i + 1}월`),
+            datasets: [
+              { label: 'Plan', data: monthlyPlan, backgroundColor: '#e0e0e0', hoverBackgroundColor: '#d6d6d6', barThickness: 12, categoryPercentage: 0.6, barPercentage: 0.9 },
+              { label: 'Actual', data: monthlyActual, backgroundColor: '#357abd', barThickness: 12, categoryPercentage: 0.6, barPercentage: 0.9 }
+            ]
+          };
+
+          const donutData = {
+            labels: ['Finished', 'On-Going', 'Delayed', 'Not Started'],
+            datasets: [{
+              data: [counts['completed'], counts['in-progress'], counts['delayed'], counts['not-started']],
+              backgroundColor: ['#d9534f', '#5bc0de', '#f0ad4e', '#e2e3e5'],
+              borderWidth: 0,
+            }]
+          };
+
           return (
-            <div key={member.id} className="member-progress-item">
-              <div className="member-info-row">
-                <span className="member-name" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                  {member.name} <small className="member-pos">({member.position})</small>
+            <div key={member.id} style={{ border: '1px solid #e9ecef', borderRadius: '8px', padding: '15px', backgroundColor: '#fff' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.95rem' }}>
+                  {member.name} <small style={{ fontSize: '0.8rem', color: '#888', fontWeight: 'normal' }}>({member.position})</small>
                   <button
                     type="button"
                     className="dash-nav-btn"
@@ -947,13 +1151,62 @@ const AssigneeListCard = ({
                     ›
                   </button>
                 </span>
-                <span className="member-task-count">{stats.taskCount}</span>
+                <span style={{ fontSize: '0.85rem', color: '#6c757d', background: 'white', padding: '1px 6px', borderRadius: '10px', border: '1px solid #dee2e6' }}>{totalTaskCode} Task Code</span>
               </div>
-              <div className="progress-info-row small"><span className="label-text">Completion</span><span className="value-pct">{stats.completionRate}%</span></div>
-              <div className="stacked-progress-bar thinner">
-                <div className="progress-segment completed" style={{ width: `${(stats.completed / stats.total) * 100}%` }} title={`완료: ${stats.completed}건`}></div>
-                <div className="progress-segment in-progress" style={{ width: `${(stats.inProgress / stats.total) * 100}%` }} title={`진행중: ${stats.inProgress}건`}></div>
-                <div className="progress-segment delayed" style={{ width: `${(stats.delayed / stats.total) * 100}%` }} title={`지연: ${stats.delayed}건`}></div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                {/* Status 섹션 (도넛 차트) */}
+                <div className="group-stat-section status" style={{ flex: '0 0 300px', alignItems: 'center' }}>
+                  <div style={{ height: '140px', position: 'relative' }}>
+                    <ChartCanvas type="doughnut" data={donutData} options={{ cutout: '50%', plugins: { legend: { display: false } } }} />
+                    <div className="donut-center-text">
+                      <span className="donut-total">{totalTaskCode}</span>
+                      <div style={{fontSize: '0.7rem', color: '#888'}}>Task Code</div>
+                    </div>
+                  </div>
+                  <div className="donut-legend">
+                    <div className="legend-item"><span className="legend-val" style={{ color: '#d9534f' }}>{counts['completed']}</span><span className="legend-label">Finished</span><span className="legend-pct">{((counts['completed'] / total) * 100).toFixed(0)}%</span></div>
+                    <div className="legend-item"><span className="legend-val" style={{ color: '#5bc0de' }}>{counts['in-progress']}</span><span className="legend-label">On-Going</span><span className="legend-pct">{((counts['in-progress'] / total) * 100).toFixed(0)}%</span></div>
+                    <div className="legend-item"><span className="legend-val" style={{ color: '#f0ad4e' }}>{counts['delayed']}</span><span className="legend-label">Delayed</span><span className="legend-pct">{((counts['delayed'] / total) * 100).toFixed(0)}%</span></div>
+                    <div className="legend-item"><span className="legend-val" style={{ color: '#e2e3e5' }}>{counts['not-started']}</span><span className="legend-label">Not Started</span><span className="legend-pct">{((counts['not-started'] / total) * 100).toFixed(0)}%</span></div>
+                  </div>
+                </div>
+                
+                {/* 업무구분별 통계 */}
+                <div>
+                  <h4 className="mbo-section-title" style={{ fontSize: '0.85rem', marginBottom: '8px' }}>업무구분 (진행 건/총 건)</h4>
+                  <div className="mbo-dist-container" style={{ maxHeight: '162px', overflowY: 'auto' }}>
+                    {category2Dist.map((item, idx) => (
+                      <div key={item.key} className="mbo-dist-item">
+                        <div className="mbo-dist-header">
+                          <span className="mbo-dist-name" style={{ fontSize: '0.8rem' }}>{item.label}</span>
+                          <span className="mbo-dist-val" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{item.displayText}</span>
+                        </div>
+                        <div className="mbo-dist-track">
+                          <div
+                            className="mbo-dist-fill"
+                            style={{ width: `${item.percentage}%`, backgroundColor: getCategoryColor(idx) }}
+                            title={`${item.label}: ${item.inProgress}/${item.total}건`}
+                          ></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Monthly Man-hour 차트 */}
+                <div>
+                  <div className="card-header-row" style={{ marginBottom: '8px' }}>
+                    <h4 style={{ fontSize: '0.85rem', fontWeight: 'bold', margin: 0 }}>Monthly Man-hour - {targetYear}</h4>
+                    <div className="chart-legend-text" style={{ fontSize: '0.7rem' }}>
+                      <div className="legend-item"><span className="legend-dot" style={{background: '#e0e0e0'}}></span>Plan</div>
+                      <div className="legend-item"><span className="legend-dot" style={{background: '#357abd'}}></span>Actual</div>
+                    </div>
+                  </div>
+                  <div style={{ height: '120px' }}>
+                    <ChartCanvas type="bar" data={barChartData} options={{ plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } }, scales: { y: { display: true, beginAtZero: true, ticks: { font: { size: 9 } } }, x: { grid: { display: false }, ticks: { font: { size: 9 } } } }, maintainAspectRatio: false }} />
+                  </div>
+                </div>
               </div>
             </div>
           );
@@ -961,7 +1214,12 @@ const AssigneeListCard = ({
       </div>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  return prevProps.group.id === nextProps.group.id &&
+    prevProps.tasks.length === nextProps.tasks.length &&
+    prevProps.targetYear === nextProps.targetYear &&
+    prevProps.currentUser?.id === nextProps.currentUser?.id;
+});
 //2601080127
 //0
 // -----------------------------------------------------------------------------
@@ -975,7 +1233,7 @@ const GroupDashboard: React.FC<{
   onDrillDown: (tasks: Task[]) => void;
   onNavigateToIssue: (task: Task) => void;
   onGoToMemberDashboard?: (memberId: string) => void;
-}> = ({ group, tasks, targetYear, currentUser, onDrillDown, onNavigateToIssue, onGoToMemberDashboard }) => {
+}> = React.memo(({ group, tasks, targetYear, currentUser, onDrillDown, onNavigateToIssue, onGoToMemberDashboard }) => {
   // ✅ 초록 박스(상단 그룹 대시보드)는 "담당자(member)"만 제외하고 볼 수 있음 (관리자/실장/팀장/그룹장 포함)
   // ✅ 빨간 박스(하단 카드 대시보드)는 "해당 그룹의 그룹장"만 볼 수 있음
   const canViewAttentionCards =
@@ -986,9 +1244,9 @@ const GroupDashboard: React.FC<{
 
   // ✅ 모든 권한자가 Progress/Trend/Monthly 대시보드를 볼 수 있도록 허용
 
-  // ✅ 그룹 뷰 상단 대시보드 집계는 업무구분 Lv.3(Task1) 기준
-  const { counts: statusCounts, totalLv3 } = useMemo(() => calculateLv3Stats(tasks), [tasks]);
-  const totalLv3Count = totalLv3 || 1;
+  // ✅ 그룹 뷰 상단 대시보드 집계는 Task Code 기준
+  const { counts: statusCounts, totalTaskCode } = useMemo(() => calculateTaskCodeStats(tasks), [tasks]);
+  const totalTaskCodeCount = totalTaskCode || 1;
 
   const donutData = { labels: ['Finished', 'On-Going', 'Delayed', 'Not Started'], datasets: [{ data: [statusCounts['completed'], statusCounts['in-progress'], statusCounts['delayed'], statusCounts['not-started']], backgroundColor: ['#d9534f', '#5bc0de', '#f0ad4e', '#e2e3e5'], borderWidth: 0 }] };
   
@@ -1028,176 +1286,202 @@ const GroupDashboard: React.FC<{
     );
   };
 
+  // 비율 계산 함수
+  const getPct = (val: number) => ((val / totalTaskCodeCount) * 100).toFixed(1);
+
   return (
     <div>
-      <div className="group-dashboard-container">
-        <div className="group-dashboard-left">
-        <div className="dashboard-card status-card">
-           <h3 className="card-title">Progress and Status <span className="sub-title">Lv.3(Task1) 수행 현황</span></h3>
-           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '220px' }}>
-             <div style={{ width: '160px', height: '160px', position: 'relative' }}>
-               <ChartCanvas type="doughnut" data={donutData} options={{ cutout: '60%', plugins: { legend: { display: false } } }} />
-               <div className="donut-center-text">
-                   <span className="donut-total" style={{ fontSize: '2rem' }}>{totalLv3}</span>
-                   <div style={{fontSize: '0.8rem', color: '#888'}}>Lv.3</div>
-               </div>
-             </div>
-             <div className="donut-legend-vertical">
-               <div className="legend-row"><span className="dot" style={{ background: '#5bc0de' }}></span> On-Going <span className="val">{statusCounts['in-progress']}</span> <span className="pct">{((statusCounts['in-progress'] / totalLv3Count) * 100).toFixed(1)}%</span></div>
-               <div className="legend-row"><span className="dot" style={{ background: '#f0ad4e' }}></span> Delayed <span className="val">{statusCounts['delayed']}</span> <span className="pct">{((statusCounts['delayed'] / totalLv3Count) * 100).toFixed(1)}%</span></div>
-               <div className="legend-row"><span className="dot" style={{ background: '#e2e3e5' }}></span> Not Started <span className="val">{statusCounts['not-started']}</span> <span className="pct">{((statusCounts['not-started'] / totalLv3Count) * 100).toFixed(1)}%</span></div>
-               <div className="legend-row"><span className="dot" style={{ background: '#d9534f' }}></span> Finished <span className="val">{statusCounts['completed']}</span> <span className="pct">{((statusCounts['completed'] / totalLv3Count) * 100).toFixed(1)}%</span></div>
-             </div>
-           </div>
-        </div>
-        {/* ... (Trend/Bar Card 기존 동일) ... */}
-        <div className="dashboard-card trend-card">
-            <div className="card-header-row">
-                <h3 className="card-title">Man-hour Trend <span className="sub-title">{targetYear}년 누적 실적</span></h3>
-                <div className="chart-legend-text">
-                    <div className="legend-item"><span className="legend-dot" style={{background: '#adb5bd'}}></span>Plan</div>
-                    <div className="legend-item"><span className="legend-dot" style={{background: '#2c3e50'}}></span>Actual</div>
+      <div className="division-dashboard" style={{ height: '941px' }}>
+        <div className="division-sidebar-panel" style={{ height: '1016px' }}>
+          <div className="division-panel-card">
+            <h3 className="panel-title">Progress and Status (Task Code)</h3>
+            <div className="overall-donut-container">
+                <ChartCanvas type="doughnut" data={donutData} options={{ cutout: '50%', plugins: { legend: { display: false } } }} height="220px" />
+                <div className="overall-center-text">
+                    <span className="overall-total">{totalTaskCode}</span>
+                    <div style={{fontSize: '0.8rem', color: '#888'}}>Task Code</div>
                 </div>
             </div>
-            <div style={{ height: '200px' }}><ChartCanvas type="line" data={lineChartData} options={{ plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true }, x: { grid: { display: false } } }, maintainAspectRatio: false }} /></div>
-        </div>
-        <div className="dashboard-card bar-card">
-          <div className="card-header-row">
-            <h3 className="card-title">Monthly Man-hour - {targetYear}</h3>
-            <div className="chart-legend-text">
-                <div className="legend-item"><span className="legend-dot" style={{background: '#e0e0e0'}}></span>Plan</div>
-                <div className="legend-item"><span className="legend-dot" style={{background: '#357abd'}}></span>Actual</div>
+             <div className="metric-summary-grid">
+              <div className="metric-box"><span className="metric-label">Finished</span><span className="metric-val" style={{ color: '#d9534f' }}>{statusCounts['completed']}</span><span className="metric-pct">({getPct(statusCounts['completed'])}%)</span></div>
+              <div className="metric-box"><span className="metric-label">On-Going</span><span className="metric-val" style={{ color: '#5bc0de' }}>{statusCounts['in-progress']}</span><span className="metric-pct">({getPct(statusCounts['in-progress'])}%)</span></div>
+              <div className="metric-box"><span className="metric-label">Delayed</span><span className="metric-val" style={{ color: '#f0ad4e' }}>{statusCounts['delayed']}</span><span className="metric-pct">({getPct(statusCounts['delayed'])}%)</span></div>
+              <div className="metric-box"><span className="metric-label">Not Started</span><span className="metric-val" style={{ color: '#adb5bd' }}>{statusCounts['not-started']}</span><span className="metric-pct">({getPct(statusCounts['not-started'])}%)</span></div>
             </div>
           </div>
-          <div style={{ height: '200px' }}><ChartCanvas type="bar" data={barChartData} options={{ plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } }, scales: { y: { display: true, beginAtZero: true }, x: { grid: { display: false } } }, maintainAspectRatio: false }} /></div>
-        </div>
-        </div>
-        <div className="group-dashboard-right">
-          <AssigneeListCard group={group} tasks={tasks} onGoToMemberDashboard={onGoToMemberDashboard} />
-        </div>
-      </div>
-
-      {/* 그룹 뷰 하단 카드 대시보드 (그룹장만) */}
-      {canViewAttentionCards && (
-        <div style={{ marginTop: '20px' }}>
-          <div className="attention-grid">
-          <div className="attention-card" onClick={() => onDrillDown(delayedStartTasks)}><div className="att-header"><span className="att-icon">⏰</span> <span className="att-title">시작 지연 Task</span> <span className="att-count">{delayedStartTasks.length}</span></div><div className="att-content">{delayedStartTasks.length === 0 ? <p className="att-empty">해당 Task가 없습니다.</p> : <ul className="att-list">{delayedStartTasks.map(t => { const planStart = getCurrentPlan(t).startDate; const delayDays = planStart ? dateDiffInDays(today, planStart) : 0; return <li key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '5px' }} title={t.name}>{t.name}</span>{renderDelayBadge(delayDays)}</li>; })}</ul>}</div></div>
-          <div className="attention-card" onClick={() => onDrillDown(overdueCompletionTasks)}><div className="att-header"><span className="att-icon">🔥</span> <span className="att-title">종료 지연 Task</span> <span className="att-count">{overdueCompletionTasks.length}</span></div><div className="att-content">{overdueCompletionTasks.length === 0 ? <p className="att-empty">해당 Task가 없습니다.</p> : <ul className="att-list">{overdueCompletionTasks.map(t => { const planEnd = getCurrentPlan(t).endDate; const delayDays = planEnd ? dateDiffInDays(today, planEnd) : 0; return <li key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '5px' }} title={t.name}>{t.name}</span>{renderDelayBadge(delayDays)}</li>; })}</ul>}</div></div>
-          <div className="attention-card" onClick={() => onDrillDown(tasksDueSoon)}><div className="att-header"><span className="att-icon">⏳</span> <span className="att-title">마감 임박 Task (7일 이내)</span> <span className="att-count">{tasksDueSoon.length}</span></div><div className="att-content">{tasksDueSoon.length === 0 ? <p className="att-empty">해당 Task가 없습니다.</p> : <ul className="att-list">{tasksDueSoon.map(t => <li key={t.id}>{t.name}</li>)}</ul>}</div></div>
-
-          <div className="attention-card" onClick={() => onDrillDown(tasksWithReviewOpinions)}>
-            <div className="att-header">
-              <span className="att-icon">💬</span>
-              <span className="att-title">검토 의견 알림</span>
-              <span className="att-count">{tasksWithReviewOpinions.length}</span>
+          <div className="division-panel-card" style={{ height: '334px' }}>
+            <div className="card-header-row">
+              <h3 className="panel-title" style={{ borderBottom: 'none', marginBottom: 0 }}>Man-hour Trend</h3>
+              <div className="chart-legend-text">
+                  <div className="legend-item"><span className="legend-dot" style={{background: '#adb5bd'}}></span>Plan</div>
+                  <div className="legend-item"><span className="legend-dot" style={{background: '#2c3e50'}}></span>Actual</div>
+              </div>
             </div>
-            <div className="att-content">
-              {tasksWithReviewOpinions.length === 0 ? (
-                <p className="att-empty">확인할 새 의견이 없습니다.</p>
-              ) : (
-                <ul className="att-list issues">
-                  {tasksWithReviewOpinions.map(t => {
-                    let unreadCount = 0;
-                    let latestReplyText = "";
-                    t.monthlyIssues.forEach(issue => {
-                      if (issue.replies) {
-                        issue.replies.forEach(r => {
-                          if (!r.checked) {
-                            unreadCount++;
-                            latestReplyText = typeof r === 'object' ? r.text : r;
+            <div className="trend-chart-container"><ChartCanvas type="line" data={lineChartData} options={{ plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }} height="200px" /></div>
+          </div>
+        </div>
+        <div className="division-main-grid" style={{ display: 'flex', flexDirection: 'column', gap: '0px', height: '1326px' }}>
+          {/* 그룹 뷰 하단 카드 대시보드 (그룹장만) */}
+          {canViewAttentionCards && (
+            <div className="attention-grid" style={{ marginBottom: '20px', width: '985px' }}>
+              <div className="attention-card" onClick={() => onDrillDown(delayedStartTasks)}><div className="att-header"><span className="att-icon">⏰</span> <span className="att-title">시작 지연 Task</span> <span className="att-count">{delayedStartTasks.length}</span></div><div className="att-content">{delayedStartTasks.length === 0 ? <p className="att-empty">해당 Task가 없습니다.</p> : <ul className="att-list">{delayedStartTasks.map(t => { const planStart = getCurrentPlan(t).startDate; const delayDays = planStart ? dateDiffInDays(today, planStart) : 0; return <li key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '5px' }} title={t.name}>{t.name}</span>{renderDelayBadge(delayDays)}</li>; })}</ul>}</div></div>
+              <div className="attention-card" onClick={() => onDrillDown(overdueCompletionTasks)}><div className="att-header"><span className="att-icon">🔥</span> <span className="att-title">종료 지연 Task</span> <span className="att-count">{overdueCompletionTasks.length}</span></div><div className="att-content">{overdueCompletionTasks.length === 0 ? <p className="att-empty">해당 Task가 없습니다.</p> : <ul className="att-list">{overdueCompletionTasks.map(t => { const planEnd = getCurrentPlan(t).endDate; const delayDays = planEnd ? dateDiffInDays(today, planEnd) : 0; return <li key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '5px' }} title={t.name}>{t.name}</span>{renderDelayBadge(delayDays)}</li>; })}</ul>}</div></div>
+              <div className="attention-card" onClick={() => onDrillDown(tasksDueSoon)}><div className="att-header"><span className="att-icon">⏳</span> <span className="att-title">마감 임박 Task (7일 이내)</span> <span className="att-count">{tasksDueSoon.length}</span></div><div className="att-content">{tasksDueSoon.length === 0 ? <p className="att-empty">해당 Task가 없습니다.</p> : <ul className="att-list">{tasksDueSoon.map(t => <li key={t.id}>{t.name}</li>)}</ul>}</div></div>
+
+              <div className="attention-card" onClick={() => onDrillDown(tasksWithReviewOpinions)}>
+                <div className="att-header">
+                  <span className="att-icon">💬</span>
+                  <span className="att-title">검토 의견 알림</span>
+                  <span className="att-count">{tasksWithReviewOpinions.length}</span>
+                </div>
+                <div className="att-content">
+                  {tasksWithReviewOpinions.length === 0 ? (
+                    <p className="att-empty">확인할 새 의견이 없습니다.</p>
+                  ) : (
+                    <ul className="att-list issues">
+                      {tasksWithReviewOpinions.map(t => {
+                        let unreadCount = 0;
+                        let latestReplyText = "";
+                        t.monthlyIssues.forEach(issue => {
+                          if (issue.replies) {
+                            issue.replies.forEach(r => {
+                              if (!r.checked) {
+                                unreadCount++;
+                                latestReplyText = typeof r === 'object' ? r.text : r;
+                              }
+                            });
                           }
                         });
-                      }
-                    });
-                    return (
-                      <li
-                        key={t.id}
-                        onClick={(e) => { e.stopPropagation(); onNavigateToIssue(t); }}
-                        style={{ cursor: 'pointer', transition: 'background-color 0.2s' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f8f9fa'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                      >
-                        <div className="att-issue-row">
-                          <div style={{ maxWidth: '75%', overflow: 'hidden' }}>
-                            <div className="att-issue-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#007bff', fontWeight: 'bold' }}>{t.name}</div>
-                            {latestReplyText && (
-                              <div style={{ fontSize: '0.8rem', color: '#868e96', marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                ↳ {latestReplyText}
+                        return (
+                          <li
+                            key={t.id}
+                            onClick={(e) => { e.stopPropagation(); onNavigateToIssue(t); }}
+                            style={{ cursor: 'pointer', transition: 'background-color 0.2s' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f8f9fa'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                          >
+                            <div className="att-issue-row">
+                              <div style={{ maxWidth: '75%', overflow: 'hidden' }}>
+                                <div className="att-issue-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#007bff', fontWeight: 'bold' }}>{t.name}</div>
+                                {latestReplyText && (
+                                  <div style={{ fontSize: '0.8rem', color: '#868e96', marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    ↳ {latestReplyText}
+                                  </div>
+                                )}
+                                <div className="att-issue-assignee">미확인 댓글 {unreadCount}건</div>
                               </div>
-                            )}
-                            <div className="att-issue-assignee">미확인 댓글 {unreadCount}건</div>
-                          </div>
-                          <span className="att-issue-badge" style={{ backgroundColor: '#e7f5ff', color: '#004085' }}>New</span>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          </div>
+                              <span className="att-issue-badge" style={{ backgroundColor: '#e7f5ff', color: '#004085' }}>New</span>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              </div>
 
-          <div className="attention-card" onClick={() => onDrillDown(tasksWithUnreviewedIssues)}>
-            <div className="att-header">
-              <span className="att-icon">📝</span>
-              <span className="att-title">미검토 이슈 Task</span>
-              <span className="att-count">{tasksWithUnreviewedIssues.length}</span>
-            </div>
-            <div className="att-content">
-              {tasksWithUnreviewedIssues.length === 0 ? (
-                <p className="att-empty">해당 Task가 없습니다.</p>
-              ) : (
-                <ul className="att-list issues">
-                  {tasksWithUnreviewedIssues.map(t => {
-                    const unreviewedItems = t.monthlyIssues.filter(i => !i.reviewed);
-                    const latestIssue = unreviewedItems.length > 0 ? unreviewedItems[unreviewedItems.length - 1] : null;
-                    return (
-                      <li
-                        key={t.id}
-                        onClick={(e) => { e.stopPropagation(); onNavigateToIssue(t); }}
-                        style={{ cursor: 'pointer', transition: 'background-color 0.2s' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f8f9fa'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                      >
-                        <div className="att-issue-row">
-                          <div style={{ maxWidth: '85%', overflow: 'hidden' }}>
-                            <div className="att-issue-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#007bff', fontWeight: 'bold' }}>{t.name}</div>
-                            {latestIssue && (
-                              <div style={{ fontSize: '0.8rem', color: '#868e96', marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                - {latestIssue.issue}
+              <div className="attention-card" onClick={() => onDrillDown(tasksWithUnreviewedIssues)}>
+                <div className="att-header">
+                  <span className="att-icon">📝</span>
+                  <span className="att-title">미검토 이슈 Task</span>
+                  <span className="att-count">{tasksWithUnreviewedIssues.length}</span>
+                </div>
+                <div className="att-content">
+                  {tasksWithUnreviewedIssues.length === 0 ? (
+                    <p className="att-empty">해당 Task가 없습니다.</p>
+                  ) : (
+                    <ul className="att-list issues">
+                      {tasksWithUnreviewedIssues.map(t => {
+                        const unreviewedItems = t.monthlyIssues.filter(i => !i.reviewed);
+                        const latestIssue = unreviewedItems.length > 0 ? unreviewedItems[unreviewedItems.length - 1] : null;
+                        return (
+                          <li
+                            key={t.id}
+                            onClick={(e) => { e.stopPropagation(); onNavigateToIssue(t); }}
+                            style={{ cursor: 'pointer', transition: 'background-color 0.2s' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f8f9fa'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                          >
+                            <div className="att-issue-row">
+                              <div style={{ maxWidth: '85%', overflow: 'hidden' }}>
+                                <div className="att-issue-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#007bff', fontWeight: 'bold' }}>{t.name}</div>
+                                {latestIssue && (
+                                  <div style={{ fontSize: '0.8rem', color: '#868e96', marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    - {latestIssue.issue}
+                                  </div>
+                                )}
+                                <div className="att-issue-assignee">{t.assigneeName}</div>
                               </div>
-                            )}
-                            <div className="att-issue-assignee">{t.assigneeName}</div>
-                          </div>
-                          <span className="att-issue-badge">{unreviewedItems.length}개</span>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
+                              <span className="att-issue-badge">{unreviewedItems.length}개</span>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
-          </div>
+          )}
+          
+          <AssigneeListCard 
+            group={group} 
+            tasks={tasks} 
+            targetYear={targetYear} 
+            onGoToMemberDashboard={onGoToMemberDashboard}
+            currentUser={currentUser}
+          />
         </div>
-      )}
+      </div>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  return prevProps.group.id === nextProps.group.id &&
+    prevProps.tasks.length === nextProps.tasks.length &&
+    prevProps.targetYear === nextProps.targetYear &&
+    prevProps.currentUser?.id === nextProps.currentUser?.id;
+});
 //0
 //2601080127
 
 
 
-const TeamCard: React.FC<{ team: Team, tasks: Task[], targetYear: number, onGoToTeam?: (teamId: string) => void }> = ({ team, tasks, targetYear, onGoToTeam }) => {
-  // ✅ 실 대시보드(팀 카드) 집계는 업무구분 Lv.2 기준
-  const { counts: statusCounts, totalLv2 } = useMemo(() => calculateLv2Stats(tasks), [tasks]);
-  const total = totalLv2 || 0;
+const TeamCard: React.FC<{ team: Team, tasks: Task[], targetYear: number, onGoToTeam?: (teamId: string) => void }> = React.memo(({ team, tasks, targetYear, onGoToTeam }) => {
+  // ✅ 실 대시보드(팀 카드) 집계는 Task Code 기준
+  const { counts: statusCounts, totalTaskCode } = useMemo(() => calculateTaskCodeStats(tasks), [tasks]);
+  const total = totalTaskCode || 0;
   const completionRate = total > 0 ? ((statusCounts['completed'] / total) * 100).toFixed(0) : '0';
   const [tooltipData, setTooltipData] = useState<{ label: string, count: number, pct: string, color: string } | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
   const handleMouseEnter = (label: string, count: number, color: string) => { setTooltipData({ label, count, pct: (total > 0 ? ((count / total) * 100).toFixed(1) : '0.0'), color }); setShowTooltip(true); };
   const handleMouseLeave = () => { setShowTooltip(false); setTooltipData(null); };
+
+  // 업무 구분별 통계 계산 (category1 기준)
+  const categoryStats = useMemo(() => {
+    const categoryGroups: Record<string, Task[]> = {};
+    tasks.forEach(task => {
+      const cat1 = task.category1 || '기타';
+      if (!categoryGroups[cat1]) categoryGroups[cat1] = [];
+      categoryGroups[cat1].push(task);
+    });
+
+    // 각 category1별로 Task Code 개수 계산
+    const stats: Array<{ category1: string; count: number; percentage: number }> = [];
+    Object.keys(categoryGroups).forEach(cat1 => {
+      const catTasks = categoryGroups[cat1];
+      const { totalTaskCode: catTaskCode } = calculateTaskCodeStats(catTasks);
+      stats.push({
+        category1: cat1,
+        count: catTaskCode || 0,
+        percentage: total > 0 ? ((catTaskCode || 0) / total) * 100 : 0
+      });
+    });
+
+    return stats.sort((a, b) => b.count - a.count);
+  }, [tasks, total]);
+
+  // 업무 구분별 색상 매핑 (getCategoryColor와 동일한 색상 팔레트)
+  const getCategoryColor = (index: number) => ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796', '#5a5c69', '#f8f9fa'][index % 8];
   const trend = useMemo(() => calculateMonthlyTrends(tasks, targetYear), [tasks, targetYear]);
   const chartData = useMemo(() => ({
     labels: trend.labels.map(l => l.slice(5)),
@@ -1206,7 +1490,7 @@ const TeamCard: React.FC<{ team: Team, tasks: Task[], targetYear: number, onGoTo
   const chartOptions = useMemo(() => ({ plugins: { legend: { display: false }, tooltip: { enabled: true, mode: 'index' as const, intersect: false } }, scales: { x: { display: true, grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 0 } }, y: { display: true, beginAtZero: true, grid: { color: '#f0f0f0' }, ticks: { font: { size: 10 } } } }, maintainAspectRatio: false, layout: { padding: { top: 0, bottom: 0, left: 0, right: 10 } } }), []);
 
   return (
-      <div className="dashboard-card team-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', height: '100%', gap: '15px' }}>
+      <div className="dashboard-card team-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', height: '378px', gap: '15px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
               <h3 style={{ margin: 0, fontSize: '1.2em', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.name} ({(team as any).code || ''})</h3>
@@ -1216,14 +1500,27 @@ const TeamCard: React.FC<{ team: Team, tasks: Task[], targetYear: number, onGoTo
                 </button>
               )}
             </div>
-            <span style={{ fontSize: '0.9em', color: '#6c757d', flexShrink: 0 }}>{total} Lv.2</span>
+            <span style={{ fontSize: '0.9em', color: '#6c757d', flexShrink: 0 }}>{total} Task Code</span>
           </div>
           <div style={{ flexShrink: 0, position: 'relative' }}>
              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9em', marginBottom: '6px', color: '#333' }}><span style={{ fontWeight: 500 }}>Completion</span><span style={{ fontWeight: 700 }}>{completionRate}%</span></div>
-             <div style={{ height: '8px', background: '#e9ecef', borderRadius: '4px', overflow: 'hidden', display: 'flex' }}>
-              <div style={{ width: `${total > 0 ? (statusCounts['completed'] / total) * 100 : 0}%`, background: '#f6ad55', cursor: 'pointer' }} onMouseEnter={() => handleMouseEnter('Completed', statusCounts['completed'], '#f6ad55')} onMouseLeave={handleMouseLeave}></div>
-              <div style={{ width: `${total > 0 ? (statusCounts['in-progress'] / total) * 100 : 0}%`, background: '#63b3ed', cursor: 'pointer' }} onMouseEnter={() => handleMouseEnter('In Progress', statusCounts['in-progress'], '#63b3ed')} onMouseLeave={handleMouseLeave}></div>
-              <div style={{ width: `${total > 0 ? (statusCounts['delayed'] / total) * 100 : 0}%`, background: '#fc8181', cursor: 'pointer' }} onMouseEnter={() => handleMouseEnter('Delayed', statusCounts['delayed'], '#fc8181')} onMouseLeave={handleMouseLeave}></div>
+             <div className="mbo-dist-track" style={{ height: '6px', background: '#f0f0f0', borderRadius: '3px', overflow: 'hidden', display: 'flex' }}>
+              {categoryStats.map((stat, idx) => (
+                <div
+                  key={stat.category1}
+                  className="mbo-dist-fill"
+                  style={{
+                    width: `${stat.percentage}%`,
+                    backgroundColor: getCategoryColor(idx),
+                    height: '100%',
+                    borderRadius: '3px',
+                    cursor: 'pointer'
+                  }}
+                  onMouseEnter={() => handleMouseEnter(stat.category1, stat.count, getCategoryColor(idx))}
+                  onMouseLeave={handleMouseLeave}
+                  title={`${stat.category1}: ${stat.count}건 (${stat.percentage.toFixed(1)}%)`}
+                ></div>
+              ))}
             </div>
             {showTooltip && tooltipData && (<div style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', marginBottom: '8px', backgroundColor: 'rgba(40, 44, 52, 0.95)', color: 'white', padding: '8px 12px', borderRadius: '4px', fontSize: '0.85rem', whiteSpace: 'nowrap', zIndex: 10, boxShadow: '0 2px 5px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', gap: '8px' }}> <span style={{ display: 'inline-block', width: '10px', height: '10px', backgroundColor: tooltipData.color, borderRadius: '2px' }}></span> <span>{tooltipData.label}: <strong>{tooltipData.count}건</strong> ({tooltipData.pct}%)</span> <div style={{ position: 'absolute', top: '100%', left: '50%', marginLeft: '-5px', borderWidth: '5px', borderStyle: 'solid', borderColor: 'rgba(40, 44, 52, 0.95) transparent transparent transparent' }}></div> </div>)}
           </div>
@@ -1240,33 +1537,38 @@ const TeamCard: React.FC<{ team: Team, tasks: Task[], targetYear: number, onGoTo
           <div className="team-groups-list" style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: 'auto', flexShrink: 0 }}>
             {team.groups.map(g => {
               const groupTasks = tasks.filter(t => t.group === g.name);
-              const { totalLv2: gLv2 } = calculateLv2Stats(groupTasks);
+              const { totalTaskCode: gTaskCode } = calculateTaskCodeStats(groupTasks);
+              const groupCode = (g as any).code || g.id;
               return (
                 <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9em', color: '#555', padding: '3px 0' }}>
-                  <span>{g.name}</span>
-                  <span style={{ fontWeight: 600 }}>{gLv2}</span>
+                  <span>{g.name} ({groupCode})</span>
+                  <span style={{ fontWeight: 600 }}>{gTaskCode}</span>
                 </div>
               );
             })}
           </div>
       </div>
   );
-};
+}, (prevProps, nextProps) => {
+  return prevProps.team.id === nextProps.team.id &&
+    prevProps.tasks.length === nextProps.tasks.length &&
+    prevProps.targetYear === nextProps.targetYear;
+});
 //2601080127
 //0
 // -----------------------------------------------------------------------------
 // [수정 3] DivisionDashboard (실/부문 대시보드)
 // -----------------------------------------------------------------------------
-const DivisionDashboard = ({ data, tasks, targetYear, onGoToTeam }: { data: SampleData, tasks: Task[], targetYear: number, onGoToTeam?: (teamId: string) => void }) => {
+const DivisionDashboard = React.memo(({ data, tasks, targetYear, onGoToTeam }: { data: SampleData, tasks: Task[], targetYear: number, onGoToTeam?: (teamId: string) => void }) => {
   // ✅ 실(Department) 대시보드 집계는 "모든 팀원(Task)" 기준
   // - 호출부에서 이미 실 범위/기간 필터를 적용해 전달
   // - 여기서는 추가 필터(활성/비활성)를 강제하지 않음
   const allTasks = useMemo(() => tasks, [tasks]);
   const teams = data.organization.departments[0].teams;
 
-  // [변경] Lv.2 집계 함수 사용
-  const { counts: overallStatus, totalLv2 } = useMemo(() => calculateLv2Stats(allTasks), [allTasks]);
-  const totalLv2Count = totalLv2 || 1;
+  // [변경] Task Code 기준 집계 함수 사용
+  const { counts: overallStatus, totalTaskCode } = useMemo(() => calculateTaskCodeStats(allTasks), [allTasks]);
+  const totalTaskCodeCount = totalTaskCode || 1;
 
   const donutData = { labels: ['Finished', 'On-Going', 'Delayed', 'Not Started'], datasets: [{ data: [overallStatus['completed'], overallStatus['in-progress'], overallStatus['delayed'], overallStatus['not-started']], backgroundColor: ['#d9534f', '#5bc0de', '#f0ad4e', '#e2e3e5'], borderWidth: 0, }] };
   
@@ -1275,19 +1577,19 @@ const DivisionDashboard = ({ data, tasks, targetYear, onGoToTeam }: { data: Samp
   const trendData = { labels: overallTrend.labels.map(l => l.slice(5)), datasets: [{ label: 'Plan', data: overallTrend.planned, borderColor: '#8884d8', backgroundColor: 'rgba(136, 132, 216, 0.2)', fill: true, tension: 0.4 }, { label: 'Actual', data: overallTrend.actual, borderColor: '#82ca9d', backgroundColor: 'rgba(130, 202, 157, 0.2)', fill: true, tension: 0.4 }] };
   
   // 비율 계산 함수
-  const getPct = (val: number) => ((val / totalLv2Count) * 100).toFixed(1);
+  const getPct = (val: number) => ((val / totalTaskCodeCount) * 100).toFixed(1);
 
   return (
     <div className="division-dashboard">
       <div className="division-sidebar-panel">
         <div className="division-panel-card">
-          <h3 className="panel-title">Progress and Status (Lv.2)</h3>
+          <h3 className="panel-title">Progress and Status (Task Code)</h3>
           <div className="overall-donut-container">
               <ChartCanvas type="doughnut" data={donutData} options={{ cutout: '50%', plugins: { legend: { display: false } } }} height="220px" />
               <div className="overall-center-text">
-                  {/* [변경] 중앙 텍스트를 Lv.2 총 개수로 변경 */}
-                  <span className="overall-total">{totalLv2}</span>
-                  <div style={{fontSize: '0.8rem', color: '#888'}}>Lv.2</div>
+                  {/* [변경] 중앙 텍스트를 Task Code 총 개수로 변경 */}
+                  <span className="overall-total">{totalTaskCode}</span>
+                  <div style={{fontSize: '0.8rem', color: '#888'}}>Task Code</div>
               </div>
           </div>
            <div className="metric-summary-grid">
@@ -1322,14 +1624,31 @@ const DivisionDashboard = ({ data, tasks, targetYear, onGoToTeam }: { data: Samp
       </div>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  return prevProps.data.organization.departments[0].id === nextProps.data.organization.departments[0].id &&
+    prevProps.tasks.length === nextProps.tasks.length &&
+    prevProps.targetYear === nextProps.targetYear;
+});
 //0
 //2601080127
 
-const MemberDashboardV2: React.FC<{ tasks: Task[], startMonth: string, endMonth: string, onDrillDown: (tasks: Task[]) => void, onNavigateToIssue: (task: Task) => void }> = ({ tasks, startMonth, endMonth, onDrillDown, onNavigateToIssue }) => {
+const MemberDashboardV2: React.FC<{ tasks: Task[], startMonth: string, endMonth: string, onDrillDown: (tasks: Task[]) => void, onNavigateToIssue: (task: Task) => void }> = React.memo(({ tasks, startMonth, endMonth, onDrillDown, onNavigateToIssue }) => {
   const filteredTasks = tasks;
   const [workloadFilter, setWorkloadFilter] = useState<'all' | 'active' | 'completed'>('all');
   const today = new Date().toISOString().split('T')[0];
+
+  // ✅ 담당자 뷰 집계는 Task Code 기준
+  const { counts: statusCounts, totalTaskCode } = useMemo(() => calculateTaskCodeStats(filteredTasks), [filteredTasks]);
+  const totalTaskCodeCount = totalTaskCode || 1;
+
+  const donutData = { labels: ['Finished', 'On-Going', 'Delayed', 'Not Started'], datasets: [{ data: [statusCounts['completed'], statusCounts['in-progress'], statusCounts['delayed'], statusCounts['not-started']], backgroundColor: ['#d9534f', '#5bc0de', '#f0ad4e', '#e2e3e5'], borderWidth: 0, }] };
+  
+  // Trend는 MH 기준이므로 기존 로직 유지
+  const overallTrend = useMemo(() => calculateMonthlyTrends(filteredTasks, parseInt(startMonth.split('-')[0])), [filteredTasks, startMonth]);
+  const trendData = { labels: overallTrend.labels.map(l => l.slice(5)), datasets: [{ label: 'Plan', data: overallTrend.planned, borderColor: '#8884d8', backgroundColor: 'rgba(136, 132, 216, 0.2)', fill: true, tension: 0.4 }, { label: 'Actual', data: overallTrend.actual, borderColor: '#82ca9d', backgroundColor: 'rgba(130, 202, 157, 0.2)', fill: true, tension: 0.4 }] };
+  
+  // 비율 계산 함수
+  const getPct = (val: number) => ((val / totalTaskCodeCount) * 100).toFixed(1);
 
   const delayedStartTasks = filteredTasks.filter(task => { const planStart = getCurrentPlan(task).startDate; return task.status === 'not-started' && planStart && planStart < today; });
   const overdueCompletionTasks = filteredTasks.filter(task => { const planEnd = getCurrentPlan(task).endDate; return ['in-progress', 'delayed'].includes(task.status) && planEnd && planEnd < today; });
@@ -1393,46 +1712,37 @@ const MemberDashboardV2: React.FC<{ tasks: Task[], startMonth: string, endMonth:
   };
 
   return (
-    <div className="member-dashboard-container">
-      <div className="motivational-banner"><span className="thumb-icon">👍</span><span>모든 Task가 순조롭게 진행되고 있어요. 편안한 한 주를 기대해봐도 좋겠네요.</span></div>
-      
-      <div className="kpi-row">
-        <div className="kpi-card"><div className="kpi-top"><span className="kpi-label">진행 중인 Task</span><span className="kpi-icon-right">🎯</span></div><div className="kpi-number">{inProgressCount}</div><div className="kpi-sub">전체 {totalCount}개 (활성/필터됨)</div></div>
-        <div className="kpi-card"><div className="kpi-top"><span className="kpi-label">완료 된 Task</span><span className="kpi-icon-right">✅</span></div><div className="kpi-number">{completedCount}</div><div className="kpi-sub">완료율 {completionRate}%</div></div>
-        <div className="kpi-card"><div className="kpi-top"><span className="kpi-label">계획 대비 시수 비율</span><span className="kpi-icon-right">📊</span></div><div className="kpi-number">{hourRatio}%</div><div className="kpi-sub">실적 {totalActualHours.toLocaleString()}h / 계획 {totalPlanHours.toLocaleString()}h</div></div>
-      </div>
-
-      <div className="charts-row">
-        <div className="dashboard-card">
+    <div className="division-dashboard">
+      <div className="division-sidebar-panel">
+        <div className="division-panel-card">
+          <h3 className="panel-title">Progress and Status (Task Code)</h3>
+          <div className="overall-donut-container">
+              <ChartCanvas type="doughnut" data={donutData} options={{ cutout: '50%', plugins: { legend: { display: false } } }} height="220px" />
+              <div className="overall-center-text">
+                  <span className="overall-total">{totalTaskCode}</span>
+                  <div style={{fontSize: '0.8rem', color: '#888'}}>Task Code</div>
+              </div>
+          </div>
+           <div className="metric-summary-grid">
+            <div className="metric-box"><span className="metric-label">Finished</span><span className="metric-val" style={{ color: '#d9534f' }}>{statusCounts['completed']}</span><span className="metric-pct">({getPct(statusCounts['completed'])}%)</span></div>
+            <div className="metric-box"><span className="metric-label">On-Going</span><span className="metric-val" style={{ color: '#5bc0de' }}>{statusCounts['in-progress']}</span><span className="metric-pct">({getPct(statusCounts['in-progress'])}%)</span></div>
+            <div className="metric-box"><span className="metric-label">Delayed</span><span className="metric-val" style={{ color: '#f0ad4e' }}>{statusCounts['delayed']}</span><span className="metric-pct">({getPct(statusCounts['delayed'])}%)</span></div>
+            <div className="metric-box"><span className="metric-label">Not Started</span><span className="metric-val" style={{ color: '#adb5bd' }}>{statusCounts['not-started']}</span><span className="metric-pct">({getPct(statusCounts['not-started'])}%)</span></div>
+          </div>
+        </div>
+        <div className="division-panel-card" style={{ flexGrow: 1 }}>
           <div className="card-header-row">
-            <h3 className="card-title">월별 착수/완료 현황 <span className="sub-title">({startMonth} ~ {endMonth})</span></h3>
+            <h3 className="panel-title" style={{ borderBottom: 'none', marginBottom: 0 }}>Man-hour Trend</h3>
             <div className="chart-legend-text">
-              <div className="legend-item"><span className="legend-dot" style={{background: '#6f42c1'}}></span>착수 건수</div>
-              <div className="legend-item"><span className="legend-dot" style={{background: '#28a745'}}></span>완료 건수</div>
+                <div className="legend-item"><span className="legend-dot" style={{background: '#8884d8'}}></span>Plan</div>
+                <div className="legend-item"><span className="legend-dot" style={{background: '#82ca9d'}}></span>Actual</div>
             </div>
           </div>
-          <div style={{ height: '250px' }}><ChartCanvas type="bar" data={startCompleteData} options={barOptions1} /></div>
-        </div>
-        <div className="dashboard-card">
-          <div className="card-header-row">
-            <h3 className="card-title">업무별 계획/실적 시수</h3>
-            <div className="chart-header-controls">
-                <div className="chart-filter-buttons" style={{ marginRight: '15px' }}>
-                    <button onClick={() => setWorkloadFilter('all')} style={{ padding: '2px 8px', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid #ced4da', cursor: 'pointer', backgroundColor: workloadFilter === 'all' ? '#495057' : 'white', color: workloadFilter === 'all' ? 'white' : '#495057' }}>전체</button>
-                    <button onClick={() => setWorkloadFilter('active')} style={{ padding: '2px 8px', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid #ced4da', cursor: 'pointer', backgroundColor: workloadFilter === 'active' ? '#5bc0de' : 'white', color: workloadFilter === 'active' ? 'white' : '#495057' }}>진행</button>
-                    <button onClick={() => setWorkloadFilter('completed')} style={{ padding: '2px 8px', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid #ced4da', cursor: 'pointer', backgroundColor: workloadFilter === 'completed' ? '#28a745' : 'white', color: workloadFilter === 'completed' ? 'white' : '#495057' }}>완료</button>
-                </div>
-                <div className="chart-legend-text">
-                    <div className="legend-item"><span className="legend-dot" style={{background: '#6f42c1'}}></span>계획</div>
-                    <div className="legend-item"><span className="legend-dot" style={{background: '#28a745'}}></span>실적</div>
-                </div>
-            </div>
-          </div>
-          <div style={{ height: '250px' }}><ChartCanvas type="bar" data={workloadData} options={barOptions2} /></div>
+          <div className="trend-chart-container"><ChartCanvas type="line" data={trendData} options={{ plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }} height="200px" /></div>
         </div>
       </div>
-
-      <div className="attention-grid">
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '20px', position: 'static' }}>
+      <div className="attention-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '15px', marginBottom: '0', position: 'static' }}>
         <div className="attention-card" onClick={() => onDrillDown(delayedStartTasks)}><div className="att-header"><span className="att-icon">⏰</span> <span className="att-title">시작 지연 Task</span> <span className="att-count">{delayedStartTasks.length}</span></div><div className="att-content">{delayedStartTasks.length === 0 ? <p className="att-empty">해당 Task가 없습니다.</p> : <ul className="att-list">{delayedStartTasks.map(t => { const planStart = getCurrentPlan(t).startDate; const delayDays = planStart ? dateDiffInDays(today, planStart) : 0; return <li key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '5px' }} title={t.name}>{t.name}</span>{renderDelayBadge(delayDays)}</li>; })}</ul>}</div></div>
         
         <div className="attention-card" onClick={() => onDrillDown(overdueCompletionTasks)}><div className="att-header"><span className="att-icon">🔥</span> <span className="att-title">종료 지연 Task</span> <span className="att-count">{overdueCompletionTasks.length}</span></div><div className="att-content">{overdueCompletionTasks.length === 0 ? <p className="att-empty">해당 Task가 없습니다.</p> : <ul className="att-list">{overdueCompletionTasks.map(t => { const planEnd = getCurrentPlan(t).endDate; const delayDays = planEnd ? dateDiffInDays(today, planEnd) : 0; return <li key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '5px' }} title={t.name}>{t.name}</span>{renderDelayBadge(delayDays)}</li>; })}</ul>}</div></div>
@@ -1533,11 +1843,45 @@ const MemberDashboardV2: React.FC<{ tasks: Task[], startMonth: string, endMonth:
             </div>
         </div>
       </div>
+      <div className="division-main-grid" style={{ gridTemplateColumns: '1fr', gap: '20px', marginTop: '20px', maxHeight: '878px', overflowY: 'auto', alignItems: 'start', alignContent: 'start' }}>
+        <div className="dashboard-card" style={{ height: '336px' }}>
+          <div className="card-header-row">
+            <h3 className="card-title">월별 착수/완료 현황 <span className="sub-title">({startMonth} ~ {endMonth})</span></h3>
+            <div className="chart-legend-text">
+              <div className="legend-item"><span className="legend-dot" style={{background: '#6f42c1'}}></span>착수 건수</div>
+              <div className="legend-item"><span className="legend-dot" style={{background: '#28a745'}}></span>완료 건수</div>
+            </div>
+          </div>
+          <div style={{ height: '250px' }}><ChartCanvas type="bar" data={startCompleteData} options={barOptions1} /></div>
+        </div>
+        <div className="dashboard-card" style={{ height: '336px' }}>
+          <div className="card-header-row">
+            <h3 className="card-title">업무별 계획/실적 시수</h3>
+            <div className="chart-header-controls">
+                <div className="chart-filter-buttons" style={{ marginRight: '15px' }}>
+                    <button onClick={() => setWorkloadFilter('all')} style={{ padding: '2px 8px', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid #ced4da', cursor: 'pointer', backgroundColor: workloadFilter === 'all' ? '#495057' : 'white', color: workloadFilter === 'all' ? 'white' : '#495057' }}>전체</button>
+                    <button onClick={() => setWorkloadFilter('active')} style={{ padding: '2px 8px', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid #ced4da', cursor: 'pointer', backgroundColor: workloadFilter === 'active' ? '#5bc0de' : 'white', color: workloadFilter === 'active' ? 'white' : '#495057' }}>진행</button>
+                    <button onClick={() => setWorkloadFilter('completed')} style={{ padding: '2px 8px', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid #ced4da', cursor: 'pointer', backgroundColor: workloadFilter === 'completed' ? '#28a745' : 'white', color: workloadFilter === 'completed' ? 'white' : '#495057' }}>완료</button>
+                </div>
+                <div className="chart-legend-text">
+                    <div className="legend-item"><span className="legend-dot" style={{background: '#6f42c1'}}></span>계획</div>
+                    <div className="legend-item"><span className="legend-dot" style={{background: '#28a745'}}></span>실적</div>
+                </div>
+            </div>
+          </div>
+          <div style={{ height: '250px' }}><ChartCanvas type="bar" data={workloadData} options={barOptions2} /></div>
+        </div>
+      </div>
+      </div>
     </div>
   );
-};
-
-const OrgManagementTab = ({ organization, onAdd, onDelete, onUpdateOrg }: { organization: Organization, onAdd: Function, onDelete: Function, onUpdateOrg: (org: Organization) => void }) => {
+}, (prevProps, nextProps) => {
+  return prevProps.tasks.length === nextProps.tasks.length &&
+    prevProps.startMonth === nextProps.startMonth &&
+    prevProps.endMonth === nextProps.endMonth;
+});
+  
+  const OrgManagementTab = ({ organization, onAdd, onDelete, onUpdateOrg }: { organization: Organization, onAdd: Function, onDelete: Function, onUpdateOrg: (org: Organization) => void }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
@@ -5538,10 +5882,42 @@ const IssueModal = ({ isOpen, onClose, task, onUpdate, user, organization }: { i
 // [중요 수정] TaskDetailModal: 숨김/활성 토글 버튼 추가
 // - 녹색 동그라미 영역에 해당하는 헤더 우측에 토글 버튼을 배치
 // [수정] TaskDetailModal: 헤더의 '숨김/활성' 토글 버튼 제거
-const TaskDetailModal = ({ task, onClose }: { task: Task | null; onClose: () => void }) => {
+const TaskDetailModal = ({ task, onClose, currentUser }: { task: Task | null; onClose: () => void; currentUser?: UserContextType | null }) => {
   if (!task) return null;
   const currentPlan = getCurrentPlan(task);
   const statusMap = { 'completed': { text: '완료', className: 'status-completed' }, 'in-progress': { text: '진행중', className: 'status-progress' }, 'delayed': { text: '지연', className: 'status-delayed' }, 'not-started': { text: '미시작', className: 'status-pending' } };
+  
+  // 권한별 정보 숨김 로직
+  let shouldHideGroupInfo = false;
+  let shouldHideTeamInfo = false;
+  let shouldHideDeptInfo = false;
+  
+  if (currentUser) {
+    const isMember = currentUser.role === 'member';
+    const isGroupLeader = currentUser.role === 'group_leader';
+    const isTeamLeader = currentUser.role === 'team_leader';
+    
+    // 담당자: 실장/팀장/그룹장 정보 모두 숨김
+    if (isMember) {
+      shouldHideGroupInfo = true;
+      shouldHideTeamInfo = true;
+      shouldHideDeptInfo = true;
+    }
+    // 그룹장: 실장/팀장 정보 숨김
+    else if (isGroupLeader) {
+      shouldHideTeamInfo = true;
+      shouldHideDeptInfo = true;
+    }
+    // 팀장: 실장 정보 숨김
+    else if (isTeamLeader) {
+      shouldHideDeptInfo = true;
+    }
+  }
+  
+  // 담당자 정보 표시 (그룹 정보는 권한에 따라 조건부 표시)
+  const assigneeDisplay = shouldHideGroupInfo 
+    ? task.assigneeName 
+    : `${task.assigneeName} (${task.group})`;
   
   return (
     <div className="modal show detail-modal" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{ zIndex: 9999 }}> 
@@ -5559,7 +5935,12 @@ const TaskDetailModal = ({ task, onClose }: { task: Task | null; onClose: () => 
           <div className="detail-item"><span className="detail-label">Task Code</span><span className="detail-value">{formatTaskCode(task.taskCode)}</span></div> 
           <div className="detail-item"><span className="detail-label">Task2</span><span className="detail-value">{task.name}</span></div> 
           <div className="detail-item"><span className="detail-label">카테고리</span><span className="detail-value">{task.category1} &gt; {task.category2} &gt; {task.category3}</span></div> 
-          <div className="detail-item"><span className="detail-label">담당자</span><span className="detail-value">{task.assigneeName} ({task.group})</span></div> 
+          <div className="detail-item">
+            <span className="detail-label">담당자</span>
+            <span className="detail-value">
+              {assigneeDisplay}
+            </span>
+          </div> 
           <div className="detail-item"><span className="detail-label">상태</span><span className="detail-value"><span className={`status-badge ${statusMap[task.status].className}`}>{statusMap[task.status].text}</span></span></div> 
           
           {/* [삭제됨] 비활성 상태 안내 문구 제거 */}
@@ -5858,7 +6239,7 @@ const App = () => {
       }
       .mobile-filter-toggle-btn { display: none; }
 
-      .container { padding: 30px; max-width: 100%; margin: 0 auto; width: 100%; box-sizing: border-box; overflow-x: hidden; flex: 1; min-height: 0; display: flex; flex-direction: column; } /* [수정] flex 속성 추가하여 스크롤 가능하도록 수정 */
+      .container { padding: 30px; max-width: 100%; margin: 0 auto; width: 100%; box-sizing: border-box; overflow: hidden; flex: 1; min-height: 144vh; display: flex; flex-direction: column; } /* [수정] flex 속성 추가하여 스크롤 가능하도록 수정 */
       
       .dashboard-card { background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); padding: 20px; height: 100%; display: flex; flexDirection: column; }
       .card-title { font-size: 1.1rem; font-weight: bold; margin-bottom: 15px; color: #333; display: flex; justify-content: space-between; align-items: center; }
@@ -5990,12 +6371,12 @@ const App = () => {
       .more-tasks-indicator { font-size: 0.7rem; color: #888; text-align: center; cursor: pointer; padding: 2px; }
       .more-tasks-indicator:hover { background: #eee; border-radius: 3px; }
 
-      .division-dashboard { display: flex; gap: 20px; height: 100%; }
+      .division-dashboard { display: flex; gap: 20px; height: auto; min-height: 100%; }
       .division-sidebar-panel { width: 300px; flex-shrink: 0; display: flex; flex-direction: column; gap: 20px; }
       .division-panel-card { background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); padding: 20px; display: flex; flex-direction: column; }
       .panel-title { font-size: 1.1rem; font-weight: bold; margin-bottom: 15px; color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px; }
       /* ✅ 실 대시보드 팀 카드: 3열 고정 배치 */
-      .division-main-grid { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; overflow-y: auto; padding-bottom: 20px; }
+      .division-main-grid { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; overflow-y: auto; padding-bottom: 20px; align-items: start; align-content: start; }
       .overall-donut-container { position: relative; height: 220px; display: flex; justify-content: center; margin-bottom: 20px; }
       .overall-center-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
       .overall-total { font-size: 2.5rem; font-weight: bold; color: #333; }
@@ -8775,16 +9156,17 @@ const App = () => {
   const handleGoToMemberDashboard = useCallback((memberId: string) => {
     const info = getMemberInfo(memberId) as any;
     if (!info) return;
-    setFilters(prev => ({
-      ...prev,
-      team: info.teamId || prev.team,
-      group: info.groupId || prev.group,
-      member: memberId
-    }));
-    setDrillDownIds(null);
-    setCurrentMainView('dashboard');
-    setCurrentView('member');
-  }, [getMemberInfo]);
+    // dashboardScopeTasks 대신 직접 필터링
+    let memberTasks = filterTasksByDateRange(data.tasks, filterStartMonth, filterEndMonth);
+    memberTasks = memberTasks.filter(task => task.isActive !== false);
+    memberTasks = memberTasks.filter(t => t.assignee === memberId);
+    if (memberTasks.length === 0) {
+      addNotification('해당 담당자의 Task가 없습니다.', 'error');
+      return;
+    }
+    setDrillDownIds(new Set(memberTasks.map(t => t.id)));
+    setCurrentMainView('taskList');
+  }, [data.tasks, filterStartMonth, filterEndMonth, addNotification, getMemberInfo]);
 
   const accessibleTasks = useMemo(() => {
     if (!currentUser) return [];
@@ -8797,13 +9179,36 @@ const App = () => {
       tasks = tasks.filter(t => drillDownIds.has(t.id));
     }
     if (!showInactive) tasks = tasks.filter(task => task.isActive !== false); 
-    if (excludeCompleted) tasks = tasks.filter(task => task.status !== 'completed'); 
+    if (excludeCompleted) tasks = tasks.filter(task => task.status !== 'completed');
     if (currentMainView !== 'calendar') { tasks = filterTasksByDateRange(tasks, filterStartMonth, filterEndMonth); }
     if (currentView === 'team') tasks = tasks.filter(task => getTeamMembers(filters.team).includes(task.assignee)); 
     else if (currentView === 'group') tasks = tasks.filter(task => getGroupMembers(filters.team, filters.group).includes(task.assignee)); 
     else if (currentView === 'member') tasks = tasks.filter(task => task.assignee === filters.member); 
     if (statusFilter) {
       if (statusFilter === 'in-progress') { tasks = tasks.filter(task => task.status === 'in-progress' || task.status === 'delayed'); } else { tasks = tasks.filter(task => task.status === statusFilter); }
+    }
+
+    // 권한별 필터링: 실장/팀장의 Task 숨김
+    if (currentUser) {
+      // 그룹장 권한: 실장/팀장의 Task 숨김
+      if (currentUser.role === 'group_leader') {
+        tasks = tasks.filter(task => {
+          const memberInfo = getMemberInfo(task.assignee);
+          if (!memberInfo) return true;
+          const isDeptHead = memberInfo.role === 'dept_head' || (typeof memberInfo.position === 'string' && memberInfo.position.includes('실장'));
+          const isTeamLeader = memberInfo.role === 'team_leader' || (typeof memberInfo.position === 'string' && memberInfo.position.includes('팀장'));
+          return !isDeptHead && !isTeamLeader;
+        });
+      }
+      // 팀장 권한: 실장의 Task 숨김
+      else if (currentUser.role === 'team_leader') {
+        tasks = tasks.filter(task => {
+          const memberInfo = getMemberInfo(task.assignee);
+          if (!memberInfo) return true;
+          const isDeptHead = memberInfo.role === 'dept_head' || (typeof memberInfo.position === 'string' && memberInfo.position.includes('실장'));
+          return !isDeptHead;
+        });
+      }
     }
 
     // Task 상세 현황: 텍스트 검색
@@ -8829,7 +9234,7 @@ const App = () => {
     }
 
     return tasks; 
-  }, [accessibleTasks, currentView, filters, statusFilter, showInactive, excludeCompleted, getTeamMembers, getGroupMembers, filterStartMonth, filterEndMonth, drillDownIds, currentMainView, taskSearchQuery]);
+  }, [accessibleTasks, currentView, filters, statusFilter, showInactive, excludeCompleted, getTeamMembers, getGroupMembers, getMemberInfo, filterStartMonth, filterEndMonth, drillDownIds, currentMainView, taskSearchQuery, currentUser]);
 
   // 대시보드 집계용 Task 목록: 권한과 무관하게 선택된 뷰(실/팀/그룹/담당자) 범위 전체를 포함
   const dashboardScopeTasks = useMemo(() => {
@@ -9262,11 +9667,13 @@ const ViewControls = () => {
     const handleGoToTeam = (teamId: string) => {
       const team = data.organization.departments[0].teams.find(t => t.id === teamId);
       if (!team) return;
-      const firstGroup = team.groups[0];
-      const firstMember = firstGroup?.members[0];
-      setDrillDownIds(null);
-      setCurrentView('team');
-      setFilters({ team: teamId, group: firstGroup?.id || '', member: firstMember?.id || '' });
+      const teamTasks = dashboardBaseTasks.filter(t => t.team === team.name);
+      if (teamTasks.length === 0) {
+        addNotification('해당 팀의 Task가 없습니다.', 'error');
+        return;
+      }
+      setDrillDownIds(new Set(teamTasks.map(t => t.id)));
+      setCurrentMainView('taskList');
     };
 
     const handleGoToGroup = (groupId: string) => {
@@ -9274,10 +9681,13 @@ const ViewControls = () => {
       if (!team) return;
       const group = team.groups.find(g => g.id === groupId);
       if (!group) return;
-      const firstMember = group.members[0];
-      setDrillDownIds(null);
-      setCurrentView('group');
-      setFilters({ team: team.id, group: groupId, member: firstMember?.id || '' });
+      const groupTasks = dashboardBaseTasks.filter(t => t.group === group.name);
+      if (groupTasks.length === 0) {
+        addNotification('해당 그룹의 Task가 없습니다.', 'error');
+        return;
+      }
+      setDrillDownIds(new Set(groupTasks.map(t => t.id)));
+      setCurrentMainView('taskList');
     };
 
     // ✅ 실(Department) 대시보드 집계: 모든 팀원 과제 기준(기간만 적용, 활성/비활성 포함)
@@ -9672,47 +10082,46 @@ const ViewControls = () => {
           <div className="table-header sticky-control-bar"> 
             <h2 className="chart-title">Task 상세 현황 <span className="task-count-badge">{sortedAndFilteredTasks.length}</span></h2> 
 
-            {/* ✅ 검색(조회) 영역: table-controls 왼쪽에 고정 배치 */}
-            {/* ✅ 검색/조회 wrapper 폭 추가 20% 축소 (224px -> 179px) */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto', marginRight: '10mm', flex: '0 1 179px', maxWidth: '179px' }}>
-              <div className="task-search" title="Task 검색">
-                <input
-                  className="task-search-input"
-                  value={taskSearchInput}
-                  onChange={(e) => setTaskSearchInput(e.target.value)}
-                  placeholder="검색 (업무구분/Task명/담당자/코드)"
-                  aria-label="Task 검색"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') {
-                      setTaskSearchInput('');
-                      setTaskSearchQuery('');
-                    }
-                  }}
-                />
-                {taskSearchInput.trim() !== '' && (
-                  <button
-                    className="task-search-clear"
-                    type="button"
-                    onClick={() => { captureTableScroll(); setTaskSearchInput(''); setTaskSearchQuery(''); }}
-                    aria-label="검색어 지우기"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-              <button
-                type="button"
-                className="btn btn-secondary task-search-apply"
-                onClick={() => { captureTableScroll(); setTaskSearchQuery(taskSearchInput); }}
-                style={{ padding: '0 8px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
-              >
-                검색
-              </button>
-            </div>
-
             <div className="table-controls" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'nowrap', justifyContent: 'flex-end', marginLeft: '0', overflowX: 'auto', maxWidth: '100%' }}> 
               {!drillDownIds && (
                 <> 
+                  {/* 검색 영역: table-controls 왼쪽에 배치 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginRight: '10px' }}>
+                    <div className="task-search" title="Task 검색" style={{ flex: '0 1 179px', maxWidth: '179px' }}>
+                      <input
+                        className="task-search-input"
+                        value={taskSearchInput}
+                        onChange={(e) => setTaskSearchInput(e.target.value)}
+                        placeholder="검색 (업무구분/Task명/담당자/코드)"
+                        aria-label="Task 검색"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            setTaskSearchInput('');
+                            setTaskSearchQuery('');
+                          }
+                        }}
+                      />
+                      {taskSearchInput.trim() !== '' && (
+                        <button
+                          className="task-search-clear"
+                          type="button"
+                          onClick={() => { captureTableScroll(); setTaskSearchInput(''); setTaskSearchQuery(''); }}
+                          aria-label="검색어 지우기"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary task-search-apply"
+                      onClick={() => { captureTableScroll(); setTaskSearchQuery(taskSearchInput); }}
+                      style={{ padding: '0 8px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                    >
+                      검색
+                    </button>
+                  </div>
+                  
                   <div className="table-controls-left" style={{ display: 'flex', gap: '10px', alignItems: 'center', marginRight: '10px' }}>
                     <label className="checkbox-label" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', alignSelf: 'center', fontSize: '0.9rem', height: '19px', lineHeight: '19px', margin: 0, padding: 0 }}>
                       <input
@@ -9731,7 +10140,7 @@ const ViewControls = () => {
                         style={{ marginRight: '5px' }}
                       />
                       완료 제외
-                    </label> 
+                    </label>
                   </div>
                   <div className="status-filter-buttons" style={{ display: 'flex', backgroundColor: '#f1f3f5', padding: '4px', borderRadius: '6px' }}>
                     {[{ value: '', label: '전체' }, { value: 'in-progress', label: '진행중' }, { value: 'delayed', label: '지연' }, { value: 'not-started', label: '미시작' }, { value: 'completed', label: '완료' }].map((opt) => (
@@ -9762,7 +10171,8 @@ const ViewControls = () => {
                 </button>
               </div>
             </div> 
-          </div> 
+          </div>
+
           {tableBody}
         </div>
       </>
@@ -10125,7 +10535,30 @@ const CalendarView = ({ tasks, currentDate, setCurrentDate, onTaskClick, onDrill
             <header className="header">
               {isSidebarCollapsed && window.innerWidth <= 768 && (<button className="mobile-menu-btn" onClick={() => setIsSidebarCollapsed(false)} style={{ marginRight: '10px' }}>☰</button>)}
               <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                <img src={LOGO_IMG} alt="S-Core Flow" style={{ height: '32px', objectFit: 'contain' }} />
+                <img 
+                  src={LOGO_IMG} 
+                  alt="S-Core Flow" 
+                  style={{ height: '32px', objectFit: 'contain', cursor: 'pointer' }} 
+                  onClick={() => {
+                    // 권한에 맞게 대시보드로 이동
+                    if (currentUser?.role === 'admin') {
+                      setCurrentMainView('dashboard');
+                      setCurrentView('department');
+                    } else if (currentUser?.role === 'dept_head') {
+                      setCurrentMainView('dashboard');
+                      setCurrentView('department');
+                    } else if (currentUser?.role === 'team_leader') {
+                      setCurrentMainView('dashboard');
+                      setCurrentView('team');
+                    } else if (currentUser?.role === 'group_leader') {
+                      setCurrentMainView('dashboard');
+                      setCurrentView('group');
+                    } else {
+                      setCurrentMainView('dashboard');
+                      setCurrentView('member');
+                    }
+                  }}
+                />
                 <span style={{ width: '1px', height: '16px', background: '#ccc', display: window.innerWidth <= 768 ? 'none' : 'block' }}></span>
                 <span style={{ fontSize: '0.95rem', color: '#555', fontWeight: 500 }}> ENG혁신실 업무 현황 모니터링 </span>
               </div>
@@ -10142,7 +10575,7 @@ const CalendarView = ({ tasks, currentDate, setCurrentDate, onTaskClick, onDrill
                       <span className="btn-icon">📋</span>
                       <span className="btn-text">표준양식 다운로드</span>
                     </button>
-                    <label className="btn btn-success header-action-btn" style={{ cursor: 'pointer', margin: 0 }}>
+                    <label className="btn btn-success header-action-btn" style={{ cursor: 'pointer', margin: 0 }} title="통합 업로드 후 자동으로 내용이 저장됩니다.">
                       <span className="btn-icon">📤</span>
                       <span className="btn-text">통합 업로드</span>
                       <input
@@ -10172,7 +10605,7 @@ const CalendarView = ({ tasks, currentDate, setCurrentDate, onTaskClick, onDrill
         <TaskDetailModal 
           task={selectedTaskForDetail} 
           onClose={() => { setDetailModalOpen(false); setSelectedTaskForDetail(null); }} 
-          /* onToggleActive={handleToggleActive}  <-- 이 줄을 삭제하세요 */
+          currentUser={currentUser}
         />
       )}
       <UploadModal isOpen={isUploadModalOpen} onClose={() => setUploadModalOpen(false)} type={uploadType} onUpload={handleUpload} />
