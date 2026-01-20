@@ -520,6 +520,7 @@ const TaskRow = React.memo(({
           <div style={{ fontSize: '0.8em', color: '#6c757d', marginTop: '2px' }}>{task.actual.hours}</div>
         </div>
       </td>
+      <td className="status-cell"><span className={`status-badge ${statusMap[task.status].className}`}>{statusMap[task.status].text}</span></td>
       <td>
         <div
           style={{
@@ -557,7 +558,6 @@ const TaskRow = React.memo(({
           </div>
         </div>
       </td>
-      <td className="status-cell"><span className={`status-badge ${statusMap[task.status].className}`}>{statusMap[task.status].text}</span></td>
       <td style={{ textAlign: 'center' }}>
         <span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '999px', fontSize: '0.8em', background: '#f1f3f5', color: '#495057', whiteSpace: 'nowrap' }}>
           {registrationLabel}
@@ -7123,7 +7123,7 @@ const App = () => {
         "Task 2 Code", "*Task 2",
         "*계획(시작일)", "*계획(종료일)", "실적(시작일)", "실적(종료일)",
         "*계획MH\n(hh.mm, mm:00~60)", "실적MH\n(hh.mm, mm:00~60)",
-        "진척률", "진행상태", "이슈 및 해결방안", "관리자 검토의견",
+        "진행상태", "진척률", "이슈 및 해결방안", "관리자 검토의견",
         "등록구분",
         "비활성화 여부"
       ]
@@ -7264,8 +7264,8 @@ const App = () => {
       { wch: 12 },               // 실적(종료일)
       { wch: 12 },               // *계획MH (hh.mm)
       { wch: 12 },               // 실적MH (hh.mm)
-      { wch: 8 },                // 진척률
       { wch: 10 },               // 진행상태
+      { wch: 8 },                // 진척률
       { wch: 30 },               // 이슈 및 해결방안
       { wch: 20 },               // 관리자 검토의견
       { wch: 10 },               // 등록구분
@@ -9371,8 +9371,8 @@ const App = () => {
         t.actual.endDate || "",         // R: 실적(종료일)
         currentPlan.hours,              // S: *계획MH
         t.actual.hours,                 // T: 실적MH
-        `${progress}%`,                 // U: 진척률
-        statusMap[t.status] || t.status,// V: 진행상태
+        statusMap[t.status] || t.status,// U: 진행상태
+        `${progress}%`,                 // V: 진척률
         issueText,                      // W: 이슈 및 해결방안
         "",                             // X: 관리자 검토의견
         getRegistrationLabelForExcel(t), // Y: 등록구분
@@ -9410,8 +9410,8 @@ const App = () => {
         "실적(종료일)",        // R
         "*계획MH\n(hh.mm, mm:00~60)",             // S
         "실적MH\n(hh.mm, mm:00~60)",              // T
-        "진척률",              // U
-        "진행상태",            // V
+        "진행상태",            // U
+        "진척률",              // V
         "이슈 및 해결방안",    // W
         "관리자 검토의견",     // X
         "등록구분",            // Y
@@ -9449,8 +9449,8 @@ const App = () => {
       { wch: 12 },               // R: 실적(종료일)
       { wch: 15 },               // S: *계획MH (hh.mm 형식 안내 포함)
       { wch: 15 },               // T: 실적MH (hh.mm 형식 안내 포함)
-      { wch: 8 },                // U: 진척률
-      { wch: 10 },               // V: 진행상태
+      { wch: 10 },               // U: 진행상태
+      { wch: 8 },                // V: 진척률
       { wch: 30 },               // W: 이슈 및 해결방안
       { wch: 20 },               // X: 관리자 검토의견
       { wch: 10 },               // Y: 등록구분
@@ -9998,8 +9998,8 @@ const ViewControls = () => {
                   <ThSortable title="담당자" sortKey="assigneeName" resizingIndex={resizingIndex} columnIndex={6} onMouseDown={handleMouseDown} hoveredResizeIndex={hoveredResizeIndex} onResizeHover={setHoveredResizeIndex} /> 
                   <ThSortable title="계획" sortKey="planned" resizingIndex={resizingIndex} columnIndex={7} onMouseDown={handleMouseDown} hoveredResizeIndex={hoveredResizeIndex} onResizeHover={setHoveredResizeIndex} /> 
                   <ThSortable title="실적" sortKey="actual" resizingIndex={resizingIndex} columnIndex={8} onMouseDown={handleMouseDown} hoveredResizeIndex={hoveredResizeIndex} onResizeHover={setHoveredResizeIndex} /> 
-                  <ThSortable title="진척률" sortKey="status" resizingIndex={resizingIndex} columnIndex={9} onMouseDown={handleMouseDown} hoveredResizeIndex={hoveredResizeIndex} onResizeHover={setHoveredResizeIndex} /> 
-                  <ThSortable title="진행상태" sortKey="status" resizingIndex={resizingIndex} columnIndex={10} onMouseDown={handleMouseDown} hoveredResizeIndex={hoveredResizeIndex} onResizeHover={setHoveredResizeIndex} />
+                  <ThSortable title="진행상태" sortKey="status" resizingIndex={resizingIndex} columnIndex={9} onMouseDown={handleMouseDown} hoveredResizeIndex={hoveredResizeIndex} onResizeHover={setHoveredResizeIndex} />
+                  <ThSortable title="진척률" sortKey="status" resizingIndex={resizingIndex} columnIndex={10} onMouseDown={handleMouseDown} hoveredResizeIndex={hoveredResizeIndex} onResizeHover={setHoveredResizeIndex} />
                   <ThSortable title="등록구분" sortKey="registration" resizingIndex={resizingIndex} columnIndex={11} onMouseDown={handleMouseDown} hoveredResizeIndex={hoveredResizeIndex} onResizeHover={setHoveredResizeIndex} />
                   <ThSortable title="비활성화" sortKey="active" resizingIndex={resizingIndex} columnIndex={12} onMouseDown={handleMouseDown} hoveredResizeIndex={hoveredResizeIndex} onResizeHover={setHoveredResizeIndex} />
                   <ThSortable title="Task Code" sortKey="taskCode" resizingIndex={resizingIndex} columnIndex={13} onMouseDown={handleMouseDown} hoveredResizeIndex={hoveredResizeIndex} onResizeHover={setHoveredResizeIndex} />

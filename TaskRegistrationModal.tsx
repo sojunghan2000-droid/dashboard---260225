@@ -540,11 +540,20 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
     onClose();
   }, [onSubmit, onNotification, pendingTask, onClose]);
 
+  // 총 계획일수 계산
+  const totalWorkingDays = useMemo(() => {
+    if (formData.plannedStart && formData.plannedEnd) {
+      return calculateWorkingDays(formData.plannedStart, formData.plannedEnd);
+    }
+    return 0;
+  }, [formData.plannedStart, formData.plannedEnd]);
+
   if (!isOpen) return null;
 
   // 스타일 정의
   const inputStyle = { backgroundColor: 'white', color: '#333', borderColor: '#ced4da' };
   const disabledStyle = { backgroundColor: '#e9ecef', color: '#6c757d', borderColor: '#ced4da' };
+  const requiredFieldStyle = { backgroundColor: 'white', color: '#333', borderColor: '#dc3545', borderWidth: '2px', borderStyle: 'solid' };
 
   // 멤버 정보 (옵션 렌더링용)
   const memberInfo = getMemberInfo(formData.assignee, organization);
@@ -761,7 +770,7 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
         {/* 계획 기간 */}
         <div className="form-row">
           <div className="form-group">
-            <label className="form-label">계획 착수일</label>
+            <label className="form-label">계획 착수일 <span style={{ color: '#dc3545' }}>*</span></label>
             <input
               type="date"
               className="form-input"
@@ -771,7 +780,7 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
             />
           </div>
           <div className="form-group">
-            <label className="form-label">계획 종료일</label>
+            <label className="form-label">계획 종료일 <span style={{ color: '#dc3545' }}>*</span></label>
             <input
               type="date"
               className="form-input"
@@ -786,7 +795,12 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
         {/* 시수 정보 */}
         <div className="form-row">
           <div className="form-group">
-            <label className="form-label">하루 예상 시수</label>
+            <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ flex: '1.01' }}>하루 예상 시수</span>
+              <span style={{ fontSize: '0.75rem', color: '#6c757d', fontWeight: 'normal', marginLeft: '10px', whiteSpace: 'nowrap' }}>
+                *참고용
+              </span>
+            </label>
             <input
               type="text"
               className="form-input"
@@ -813,7 +827,12 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
             />
           </div>
           <div className="form-group">
-            <label className="form-label">계획 시수</label>
+            <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>계획 시수</span>
+              <span style={{ fontSize: '0.75rem', color: '#6c757d', fontWeight: 'normal', marginLeft: '10px', whiteSpace: 'nowrap' }}>
+                ({formData.plannedDailyHours || '0'}×{totalWorkingDays}일)
+              </span>
+            </label>
             <input
               type="text"
               className="form-input"
