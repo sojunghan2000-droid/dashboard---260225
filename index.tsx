@@ -5882,7 +5882,8 @@ const IssueModal = ({ isOpen, onClose, task, onUpdate, user, organization }: { i
 // [중요 수정] TaskDetailModal: 숨김/활성 토글 버튼 추가
 // - 녹색 동그라미 영역에 해당하는 헤더 우측에 토글 버튼을 배치
 // [수정] TaskDetailModal: 헤더의 '숨김/활성' 토글 버튼 제거
-const TaskDetailModal = ({ task, onClose, currentUser }: { task: Task | null; onClose: () => void; currentUser?: UserContextType | null }) => {
+// 비활성 추가: TaskDetailModal에 onToggleActive prop 추가
+const TaskDetailModal = ({ task, onClose, currentUser, onToggleActive, canToggleActive }: { task: Task | null; onClose: () => void; currentUser?: UserContextType | null; onToggleActive?: (taskId: string, isActive: boolean) => void; canToggleActive?: boolean }) => {
   if (!task) return null;
   const currentPlan = getCurrentPlan(task);
   const statusMap = { 'completed': { text: '완료', className: 'status-completed' }, 'in-progress': { text: '진행중', className: 'status-progress' }, 'delayed': { text: '지연', className: 'status-delayed' }, 'not-started': { text: '미시작', className: 'status-pending' } };
@@ -5919,6 +5920,8 @@ const TaskDetailModal = ({ task, onClose, currentUser }: { task: Task | null; on
     ? task.assigneeName 
     : `${task.assigneeName} (${task.group})`;
   
+  const isActive = task.isActive !== false;
+  
   return (
     <div className="modal show detail-modal" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{ zIndex: 9999 }}> 
       <div className="modal-content"> 
@@ -5926,7 +5929,20 @@ const TaskDetailModal = ({ task, onClose, currentUser }: { task: Task | null; on
           <h3 style={{ margin: 0 }}>Task 상세 정보</h3>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {/* [삭제됨] 숨김/활성 토글 버튼 제거 */}
+            {/* 비활성 추가: 담당자도 자신의 Task를 비활성화할 수 있도록 토글 버튼 추가 */}
+            {canToggleActive && onToggleActive && (
+              <button
+                className={`btn-action toggle-active ${isActive ? 'active' : ''}`}
+                onClick={(e) => { 
+                  e.stopPropagation(); 
+                  onToggleActive(task.id, isActive); 
+                }}
+                title={isActive ? '비활성화' : '활성화'}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '1.2rem', padding: '4px' }}
+              >
+                {isActive ? '👁️' : '👁️‍🗨️'}
+              </button>
+            )}
             
             <button type="button" onClick={(e) => { e.stopPropagation(); onClose(); }} style={{ position: 'static', background: '#f3f4f6', border: 'none', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#6b7280', fontWeight: 'bold', fontSize: '1.2rem', zIndex: 10000, flexShrink: 0 }} title="닫기">×</button>
           </div>
@@ -7002,7 +7018,8 @@ const App = () => {
       const myGroupName = getGroupNameById(currentUser.groupId);
       return !!myGroupName && task.group === myGroupName;
     }
-    return false;
+    // 비활성 추가: 담당자도 자신의 Task를 비활성화할 수 있도록 권한 추가
+    return task.assignee === currentUser.id;
   }, [currentUser, data.organization.departments, getTeamNameById, getGroupNameById]);
 
   const handleToggleActive = (taskId: string, currentActive: boolean) => {
@@ -10606,6 +10623,8 @@ const CalendarView = ({ tasks, currentDate, setCurrentDate, onTaskClick, onDrill
           task={selectedTaskForDetail} 
           onClose={() => { setDetailModalOpen(false); setSelectedTaskForDetail(null); }} 
           currentUser={currentUser}
+          onToggleActive={handleToggleActive}
+          canToggleActive={selectedTaskForDetail ? canToggleActiveForUser(selectedTaskForDetail) : false}
         />
       )}
       <UploadModal isOpen={isUploadModalOpen} onClose={() => setUploadModalOpen(false)} type={uploadType} onUpload={handleUpload} />
