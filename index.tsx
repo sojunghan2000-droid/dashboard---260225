@@ -6852,8 +6852,22 @@ const App = () => {
 
   // ...
 
-  const getTeamMembers = useCallback((teamId: string) => { const team = data.organization.departments[0].teams.find(t => t.id === teamId); return team ? team.groups.flatMap(g => g.members.map(m => m.id)) : []; }, [data.organization]);
-  const getGroupMembers = useCallback((teamId: string, groupId: string) => { const team = data.organization.departments[0].teams.find(t => t.id === teamId); const group = team ? team.groups.find(g => g.id === groupId) : null; return group ? group.members.map(m => m.id) : []; }, [data.organization]);
+  ///20260225신규 - 대시보드 전용 병합 조직 (ENG혁신실 + 품질실 teams 합침)
+  const dashboardOrganization = useMemo(() => {
+    const engDept = data.organization.departments.find(d => d.name === 'ENG혁신실');
+    const qualDept = data.organization.departments.find(d => d.name === '품질실');
+    if (!engDept || !qualDept) return data.organization;
+    return { ...data.organization, departments: [{ ...engDept, teams: [...engDept.teams, ...qualDept.teams] }] };
+  }, [data.organization]);
+  ///20260225신규 - 부서 표시 치환 함수
+  const getDisplayDepartment = (dept: string) => dept === '품질실' ? 'ENG혁신실' : dept;
+
+  ///20260225기존
+  //const getTeamMembers = useCallback((teamId: string) => { const team = data.organization.departments[0].teams.find(t => t.id === teamId); return team ? team.groups.flatMap(g => g.members.map(m => m.id)) : []; }, [data.organization]);
+  //const getGroupMembers = useCallback((teamId: string, groupId: string) => { const team = data.organization.departments[0].teams.find(t => t.id === teamId); const group = team ? team.groups.find(g => g.id === groupId) : null; return group ? group.members.map(m => m.id) : []; }, [data.organization]);
+  ///20260225신규
+  const getTeamMembers = useCallback((teamId: string) => { const team = dashboardOrganization.departments[0].teams.find(t => t.id === teamId); return team ? team.groups.flatMap(g => g.members.map(m => m.id)) : []; }, [dashboardOrganization]);
+  const getGroupMembers = useCallback((teamId: string, groupId: string) => { const team = dashboardOrganization.departments[0].teams.find(t => t.id === teamId); const group = team ? team.groups.find(g => g.id === groupId) : null; return group ? group.members.map(m => m.id) : []; }, [dashboardOrganization]);
   const getMemberInfo = useCallback((memberId: string) => {
     for (const dept of data.organization.departments) {
       for (const team of dept.teams) {
@@ -6959,7 +6973,10 @@ const App = () => {
     }
   }, [currentUser, hasShownSetupError, getSetupMissingReasons, openBlockingErrorModal]);
 
-  const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => { const { id, value } = e.target; if (id === 'teamSelect') { const team = data.organization.departments[0].teams.find(t => t.id === value); if (team) { const group = team.groups[0]; const member = group?.members[0]; setFilters({ team: value, group: group?.id || '', member: member?.id || '' }); } } else if (id === 'groupSelect') { const team = data.organization.departments[0].teams.find(t => t.id === filters.team); const group = team?.groups.find(g => g.id === value); const member = group?.members[0]; setFilters(prev => ({ ...prev, group: value, member: member?.id || '' })); } else if (id === 'memberSelect') { setFilters(prev => ({ ...prev, member: value })); } };
+  ///20260225기존
+  //const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => { const { id, value } = e.target; if (id === 'teamSelect') { const team = data.organization.departments[0].teams.find(t => t.id === value); if (team) { const group = team.groups[0]; const member = group?.members[0]; setFilters({ team: value, group: group?.id || '', member: member?.id || '' }); } } else if (id === 'groupSelect') { const team = data.organization.departments[0].teams.find(t => t.id === filters.team); const group = team?.groups.find(g => g.id === value); const member = group?.members[0]; setFilters(prev => ({ ...prev, group: value, member: member?.id || '' })); } else if (id === 'memberSelect') { setFilters(prev => ({ ...prev, member: value })); } };
+  ///20260225신규
+  const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => { const { id, value } = e.target; if (id === 'teamSelect') { const team = dashboardOrganization.departments[0].teams.find(t => t.id === value); if (team) { const group = team.groups[0]; const member = group?.members[0]; setFilters({ team: value, group: group?.id || '', member: member?.id || '' }); } } else if (id === 'groupSelect') { const team = dashboardOrganization.departments[0].teams.find(t => t.id === filters.team); const group = team?.groups.find(g => g.id === value); const member = group?.members[0]; setFilters(prev => ({ ...prev, group: value, member: member?.id || '' })); } else if (id === 'memberSelect') { setFilters(prev => ({ ...prev, member: value })); } };
   const handleExcludeCompletedChange = (e: React.ChangeEvent<HTMLInputElement>) => { setExcludeCompleted(e.target.checked); };
   // ... (기존 State 및 로직 유지) ...
   // [중요] handleToggleActive 함수 수정/확인
@@ -7215,7 +7232,10 @@ const App = () => {
       
       taskWsData.push([
         task.id,
-        task.department || '',
+        ///20260225기존
+        //task.department || '',
+        ///20260225신규
+        getDisplayDepartment(task.department) || '',
         task.team || '',
         task.group || '',
         task.assigneeName || '',
@@ -9371,7 +9391,10 @@ const App = () => {
 
       return [
         t.id,                           // A: Task ID (Hidden)
-        t.department,                   // B: *실
+        ///20260225기존
+        //t.department,                   // B: *실
+        ///20260225신규
+        getDisplayDepartment(t.department),  // B: *실
         t.team,                         // C: *팀
         t.group,                        // D: *그룹
         t.assigneeName,                 // E: *담당자
@@ -9565,30 +9588,60 @@ const ViewControls = () => {
     const [isDateRangeOpen, setIsDateRangeOpen] = useState(false);
     const monthOptions = useMemo(() => { const options = []; for (let y = 2024; y <= 2026; y++) { for (let m = 1; m <= 12; m++) { const val = `${y}-${String(m).padStart(2, '0')}`; const label = `${y}년 ${m}월`; options.push({ value: val, label: label }); } } return options; }, []);
     
+    ///20260225기존
+    //const availableTeams = useMemo(() => {
+    //  const allTeams = data.organization.departments[0].teams;
+    //  if (!currentUser || currentUser.role === 'admin' || currentUser.role === 'dept_head') return allTeams;
+    //  return allTeams.filter(t => t.id === currentUser.teamId);
+    //}, [data.organization, currentUser]);
+    ///20260225신규
     const availableTeams = useMemo(() => {
-      const allTeams = data.organization.departments[0].teams;
+      const allTeams = dashboardOrganization.departments[0].teams;
       if (!currentUser || currentUser.role === 'admin' || currentUser.role === 'dept_head') return allTeams;
       return allTeams.filter(t => t.id === currentUser.teamId);
-    }, [data.organization, currentUser]);
+    }, [dashboardOrganization, currentUser]);
 
+    ///20260225기존
+    //const availableGroups = useMemo(() => {
+    //  const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team);
+    //  if (!selectedTeam) return [];
+    //  if (!currentUser || currentUser.role === 'admin' || currentUser.role === 'dept_head' || currentUser.role === 'team_leader') { return selectedTeam.groups; }
+    //  return selectedTeam.groups.filter(g => g.id === currentUser.groupId);
+    //}, [data.organization, filters.team, currentUser]);
+    ///20260225신규
     const availableGroups = useMemo(() => {
-      const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team);
+      const selectedTeam = dashboardOrganization.departments[0].teams.find(t => t.id === filters.team);
       if (!selectedTeam) return [];
       if (!currentUser || currentUser.role === 'admin' || currentUser.role === 'dept_head' || currentUser.role === 'team_leader') { return selectedTeam.groups; }
       return selectedTeam.groups.filter(g => g.id === currentUser.groupId);
-    }, [data.organization, filters.team, currentUser]);
+    }, [dashboardOrganization, filters.team, currentUser]);
 
+    ///20260225기존
+    //const availableMembers = useMemo(() => {
+    //  const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team);
+    //  const selectedGroup = selectedTeam?.groups.find(g => g.id === filters.group);
+    //  if (!selectedGroup) return [];
+    //  if (currentUser && currentUser.role === 'member') {
+    //      return selectedGroup.members.filter(m => m.id === currentUser.id);
+    //  }
+    //  return selectedGroup.members;
+    //}, [data.organization, filters.team, filters.group, currentUser]);
+    ///20260225신규
     const availableMembers = useMemo(() => {
-      const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team);
+      const selectedTeam = dashboardOrganization.departments[0].teams.find(t => t.id === filters.team);
       const selectedGroup = selectedTeam?.groups.find(g => g.id === filters.group);
       if (!selectedGroup) return [];
-      if (currentUser && currentUser.role === 'member') { 
-          return selectedGroup.members.filter(m => m.id === currentUser.id); 
+      if (currentUser && currentUser.role === 'member') {
+          return selectedGroup.members.filter(m => m.id === currentUser.id);
       }
       return selectedGroup.members;
-    }, [data.organization, filters.team, filters.group, currentUser]);
+    }, [dashboardOrganization, filters.team, filters.group, currentUser]);
 
-    const currentTeam = data.organization.departments[0].teams.find(t => t.id === filters.team);
+    ///20260225기존
+    //const currentTeam = data.organization.departments[0].teams.find(t => t.id === filters.team);
+    //const currentGroup = currentTeam?.groups.find(g => g.id === filters.group);
+    ///20260225신규
+    const currentTeam = dashboardOrganization.departments[0].teams.find(t => t.id === filters.team);
     const currentGroup = currentTeam?.groups.find(g => g.id === filters.group);
     
     return (
@@ -9684,7 +9737,10 @@ const ViewControls = () => {
     const dashboardBaseTasks = dashboardScopeTasks;
     const targetYear = parseInt(filterStartMonth.split('-')[0]) || new Date().getFullYear();
     const handleGoToTeam = (teamId: string) => {
-      const team = data.organization.departments[0].teams.find(t => t.id === teamId);
+      ///20260225기존
+      //const team = data.organization.departments[0].teams.find(t => t.id === teamId);
+      ///20260225신규
+      const team = dashboardOrganization.departments[0].teams.find(t => t.id === teamId);
       if (!team) return;
       const teamTasks = dashboardBaseTasks.filter(t => t.team === team.name);
       if (teamTasks.length === 0) {
@@ -9696,7 +9752,10 @@ const ViewControls = () => {
     };
 
     const handleGoToGroup = (groupId: string) => {
-      const team = data.organization.departments[0].teams.find(t => t.id === filters.team);
+      ///20260225기존
+      //const team = data.organization.departments[0].teams.find(t => t.id === filters.team);
+      ///20260225신규
+      const team = dashboardOrganization.departments[0].teams.find(t => t.id === filters.team);
       if (!team) return;
       const group = team.groups.find(g => g.id === groupId);
       if (!group) return;
@@ -9711,10 +9770,19 @@ const ViewControls = () => {
 
     // ✅ 실(Department) 대시보드 집계: 모든 팀원 과제 기준(기간만 적용, 활성/비활성 포함)
     const divisionDashboardTasks = filterTasksByDateRange(data.tasks, filterStartMonth, filterEndMonth);
-    if (currentView === 'department') return <DivisionDashboard data={data} tasks={divisionDashboardTasks} targetYear={targetYear} onGoToTeam={handleGoToTeam} />;
-    if (currentView === 'team') { const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team); const teamTasks = dashboardBaseTasks.filter(t => t.team === selectedTeam?.name); if (selectedTeam) return <TeamDashboard team={selectedTeam} tasks={teamTasks} targetYear={targetYear} onGoToGroup={handleGoToGroup} />; }
+    ///20260225기존
+    //if (currentView === 'department') return <DivisionDashboard data={data} tasks={divisionDashboardTasks} targetYear={targetYear} onGoToTeam={handleGoToTeam} />;
+    ///20260225신규
+    if (currentView === 'department') return <DivisionDashboard data={{ ...data, organization: dashboardOrganization }} tasks={divisionDashboardTasks} targetYear={targetYear} onGoToTeam={handleGoToTeam} />;
+    ///20260225기존
+    //if (currentView === 'team') { const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team); const teamTasks = dashboardBaseTasks.filter(t => t.team === selectedTeam?.name); if (selectedTeam) return <TeamDashboard team={selectedTeam} tasks={teamTasks} targetYear={targetYear} onGoToGroup={handleGoToGroup} />; }
+    ///20260225신규
+    if (currentView === 'team') { const selectedTeam = dashboardOrganization.departments[0].teams.find(t => t.id === filters.team); const teamTasks = dashboardBaseTasks.filter(t => t.team === selectedTeam?.name); if (selectedTeam) return <TeamDashboard team={selectedTeam} tasks={teamTasks} targetYear={targetYear} onGoToGroup={handleGoToGroup} />; }
     if (currentView === 'group') {
-      const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team);
+      ///20260225기존
+      //const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team);
+      ///20260225신규
+      const selectedTeam = dashboardOrganization.departments[0].teams.find(t => t.id === filters.team);
       const selectedGroup = selectedTeam?.groups.find(g => g.id === filters.group);
       const groupTasks = dashboardBaseTasks.filter(t => t.group === selectedGroup?.name);
       if (selectedGroup) {
@@ -9731,7 +9799,10 @@ const ViewControls = () => {
         );
       }
     }
-    if (currentView === 'member') { const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team); const selectedGroup = selectedTeam?.groups.find(g => g.id === filters.group); const selectedMember = selectedGroup?.members.find(m => m.id === filters.member); const memberTasks = dashboardBaseTasks.filter(t => t.assignee === selectedMember?.id); return ( <MemberDashboardV2 tasks={memberTasks} startMonth={filterStartMonth} endMonth={filterEndMonth} onDrillDown={handleDrillDown} onNavigateToIssue={handleNavigateToIssue} /> ); }
+    ///20260225기존
+    //if (currentView === 'member') { const selectedTeam = data.organization.departments[0].teams.find(t => t.id === filters.team); const selectedGroup = selectedTeam?.groups.find(g => g.id === filters.group); const selectedMember = selectedGroup?.members.find(m => m.id === filters.member); const memberTasks = dashboardBaseTasks.filter(t => t.assignee === selectedMember?.id); return ( <MemberDashboardV2 tasks={memberTasks} startMonth={filterStartMonth} endMonth={filterEndMonth} onDrillDown={handleDrillDown} onNavigateToIssue={handleNavigateToIssue} /> ); }
+    ///20260225신규
+    if (currentView === 'member') { const selectedTeam = dashboardOrganization.departments[0].teams.find(t => t.id === filters.team); const selectedGroup = selectedTeam?.groups.find(g => g.id === filters.group); const selectedMember = selectedGroup?.members.find(m => m.id === filters.member); const memberTasks = dashboardBaseTasks.filter(t => t.assignee === selectedMember?.id); return ( <MemberDashboardV2 tasks={memberTasks} startMonth={filterStartMonth} endMonth={filterEndMonth} onDrillDown={handleDrillDown} onNavigateToIssue={handleNavigateToIssue} /> ); }
     return null;
   };
 

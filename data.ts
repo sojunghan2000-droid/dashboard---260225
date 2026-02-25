@@ -36,13 +36,18 @@ export const categoryCodeMapping = {
 
 // 조직 코드 매핑 (Organization Code Mapping)
 export const orgCodeMapping = {
-  departments: { 'ENG혁신실': 'DI' },
+  ///20260225기존
+  //departments: { 'ENG혁신실': 'DI' },
+  ///20260225신규
+  departments: { 'ENG혁신실': 'DI', '품질실': 'QA' },
   teams: { 
     'AI개발팀': 'AI', 
     'TA팀': 'TA', 
     '융합기술팀': 'CT', 
     '기반기술팀': 'BT', 
-    'ENG혁신지원그룹': 'ES'
+    'ENG혁신지원그룹': 'ES',
+    ///20260225신규
+    '품질팀': 'QT'
   },
   groups: {
     '자연어처리그룹': 'NLP', 
@@ -51,7 +56,9 @@ export const orgCodeMapping = {
     'TA그룹': 'TAG',
     '융합S/W그룹': 'CSG', 
     '클라우드인프라그룹': 'CIG', 
-    'ENG혁신지원그룹': 'ENG'
+    'ENG혁신지원그룹': 'ENG',
+    ///20260225신규
+    '품질그룹': 'QAG'
   }
 };
 
@@ -375,8 +382,29 @@ const initialOrganizationData: Organization = {
         categoryMaster: JSON.parse(JSON.stringify(categoryMasterData)),
         obsMaster: createInitialOBSMaster('ENG혁신지원그룹')
       }
-    ] 
-  }] 
+    ]
+  },
+  ///20260225신규 - 품질실 department 추가
+  {
+    id: 'dept2',
+    name: '품질실',
+    teams: [{
+      id: 'team_qa1',
+      name: '품질팀',
+      groups: [{
+        id: 'group_qa1',
+        name: '품질그룹',
+        members: [
+          { id: 'a', name: '소중한', position: '프로' },
+          { id: 'emp_qa1', name: '박민정', position: '선임연구원' },
+          { id: 'emp_qa2', name: '최준혁', position: '주임연구원', role: 'group_leader' }
+        ]
+      }],
+      categoryMaster: JSON.parse(JSON.stringify(categoryMasterData)),
+      obsMaster: createInitialOBSMaster('품질팀')
+    }]
+  }
+  ]
 };
 
 // 초기 데이터 전체에 기본 계정 정보 주입하는 함수
