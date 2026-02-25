@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "push": "node scripts/bump-version.js && git add version.ts && git commit -m \"chore: version bump\" && git push origin main"
+    "push": "node scripts/bump-version.cjs && git add version.ts && git commit -m \"chore: version bump\" && git push origin main"
   },
   "dependencies": {
     "chart.js": "^4.5.1",
