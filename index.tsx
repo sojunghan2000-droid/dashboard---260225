@@ -2,6 +2,7 @@
 
 import React, { Component, useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
+import { APP_VERSION } from './version';
 
 // --- Type Definitions ---
 import type {
@@ -6192,6 +6193,7 @@ const App = () => {
       .sidebar.collapsed { width: 60px; }
       .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 20px; height: 60px; border-bottom: 1px solid rgba(255,255,255,0.1); }
       .sidebar h2 { margin: 0; font-size: 1.2rem; white-space: nowrap; overflow: hidden; }
+      .version-badge { font-size: 0.65rem; font-weight: 400; color: rgba(255,255,255,0.55); margin-left: 6px; letter-spacing: 0.03em; }
       .sidebar-toggle-btn { background: transparent; border: none; color: white; font-size: 1.2rem; cursor: pointer; padding: 5px; border-radius: 4px; }
       .sidebar-toggle-btn:hover { background: rgba(255,255,255,0.1); }
       .sidebar-nav { flex: 1; padding: 20px 0; overflow-y: auto; }
@@ -9668,7 +9670,7 @@ const ViewControls = () => {
 
   const Sidebar = () => (
     <nav className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}> 
-      <div className="sidebar-header"> {!isSidebarCollapsed && <h2>성과관리</h2>} <button className="sidebar-toggle-btn" onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} title={isSidebarCollapsed ? "메뉴 펼치기" : "메뉴 접기"}> {isSidebarCollapsed ? '▶' : '◀'} </button> </div> 
+      <div className="sidebar-header"> {!isSidebarCollapsed && <h2>성과관리 <span className="version-badge">{APP_VERSION}</span></h2>} <button className="sidebar-toggle-btn" onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} title={isSidebarCollapsed ? "메뉴 펼치기" : "메뉴 접기"}> {isSidebarCollapsed ? '▶' : '◀'} </button> </div> 
       <ul className="sidebar-nav"> 
         <li className={currentMainView === 'dashboard' ? 'active' : ''}><a href="#" onClick={(e) => { e.preventDefault(); setDrillDownIds(null); setCurrentMainView('dashboard'); }} title="대시보드"><span className="nav-icon">📊</span><span className="nav-text">대시보드</span></a></li> 
         <li className={currentMainView === 'taskList' ? 'active' : ''}><a href="#" onClick={(e) => { e.preventDefault(); setDrillDownIds(null); setCurrentMainView('taskList'); }} title="Task 목록"><span className="nav-icon">📋</span><span className="nav-text">Task 목록</span></a></li> 
