@@ -4717,7 +4717,10 @@ const AdminPanel = ({
     let newOrganization = JSON.parse(JSON.stringify(organization));
     const newId = `${level}_${Date.now()}`;
     if (level === 'department') { newOrganization.departments.push({ id: newId, name, teams: [] }); }
-    else if (level === 'team' && parentIds?.departmentId) { const dept = newOrganization.departments.find((d: Department) => d.id === parentIds.departmentId); if (dept) { dept.teams.push({ id: newId, name, groups: [], categoryMaster: JSON.parse(JSON.stringify(categoryMasterData)) }); } }
+    ///20260225기존
+    //else if (level === 'team' && parentIds?.departmentId) { const dept = newOrganization.departments.find((d: Department) => d.id === parentIds.departmentId); if (dept) { dept.teams.push({ id: newId, name, groups: [], categoryMaster: JSON.parse(JSON.stringify(categoryMasterData)) }); } }
+    ///20260225신규
+    else if (level === 'team' && parentIds?.departmentId) { const dept = newOrganization.departments.find((d: Department) => d.id === parentIds.departmentId); if (dept) { dept.teams.push({ id: newId, name, groups: [], categoryMaster: JSON.parse(JSON.stringify(categoryMasterData)), obsMaster: {} }); } }
     else if (level === 'group' && parentIds?.teamId) { let found = false; for (const dept of newOrganization.departments) { const team = dept.teams.find((t: Team) => t.id === parentIds.teamId); if (team) { team.groups.push({ id: newId, name, members: [] }); found = true; break; } } if (!found) { addNotification("상위 팀을 찾지 못해 실패했습니다.", "error"); return; } }
     onUpdateData({ ...data, organization: newOrganization });
     addNotification(`'${name}' 추가됨`, 'success');

@@ -186,7 +186,10 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
     const memberInfo = getMemberInfo(formData.assignee, organization);
     if (!memberInfo) return {};
     
-    const team = organization.departments[0]?.teams.find(t => t.id === memberInfo.teamId);
+    ///20260225기존
+    //const team = organization.departments[0]?.teams.find(t => t.id === memberInfo.teamId);
+    ///20260225신규
+    const team = organization.departments.flatMap(d => d.teams).find(t => t.id === memberInfo.teamId);
     return team ? (team.obsMaster || {}) : {};
   }, [formData.assignee, organization]);
 
@@ -575,7 +578,10 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
               onChange={(e) => handleFieldChange('assignee', e.target.value)}
               style={inputStyle}
             >
-              {organization.departments[0]?.teams.flatMap(team => team.groups).map(group => (
+              {///20260225기존
+              //organization.departments[0]?.teams.flatMap(team => team.groups).map(group => (
+              ///20260225신규
+              organization.departments.flatMap(d => d.teams).flatMap(team => team.groups).map(group => (
                 <optgroup key={group.id} label={group.name}>
                   {group.members.map(member => (
                     <option key={member.id} value={member.id}>
