@@ -480,6 +480,17 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
     }
 
     // Task Code 결정: Task 2 기반 자동 생성(중복 없는 번호)
+    ///20260312기존
+    //const taskCode = generateTaskCodeForTask2({
+    //  taskName: formData.name,
+    //  category1: resolvedCategory1,
+    //  category2: resolvedCategory2,
+    //  category3: formData.category3,
+    //  memberInfo: memberInfo ? { department: memberInfo.department, team: memberInfo.team, group: memberInfo.group } : null,
+    //  adminCategoryMaster,
+    //  existingTasks
+    //});
+    ///20260312신규
     const taskCode = generateTaskCodeForTask2({
       taskName: formData.name,
       category1: resolvedCategory1,
@@ -487,7 +498,8 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
       category3: formData.category3,
       memberInfo: memberInfo ? { department: memberInfo.department, team: memberInfo.team, group: memberInfo.group } : null,
       adminCategoryMaster,
-      existingTasks
+      existingTasks,
+      organization
     });
 
     // Task 객체 생성
@@ -537,7 +549,13 @@ export const TaskRegistrationModal: React.FC<TaskRegistrationModalProps> = ({
   const confirmSave = useCallback(() => {
     if (!pendingTask) return;
     onSubmit(pendingTask);
+    ///20260312기존
+    //onNotification(`Task 등록 완료 (Code: ${pendingTask.taskCode})`, 'success');
+    ///20260312신규
     onNotification(`Task 등록 완료 (Code: ${pendingTask.taskCode})`, 'success');
+    if (/DXX|TXX|GXX/.test(pendingTask.taskCode || '')) {
+      onNotification('조직 관리에서 조직 등록을 확인해 주세요.', 'error');
+    }
     setIsConfirmOpen(false);
     setPendingTask(null);
     onClose();
